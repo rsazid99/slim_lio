@@ -1,0 +1,12 @@
+#
+# * @file            config/mid360.yaml
+# * @description     
+# * @author          rsazid99 <rsazid99@gmail.com>
+# * @createTime      2026-04-22 23:53:22
+# * @lastModified    2026-04-23 02:44:45
+# * Copyright ©Sazid Rahman Simanto All rights reserved
+#
+
+lio_node:
+  ros__parameters:
+    imu_sample_rate: 200
