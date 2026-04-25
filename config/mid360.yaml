@@ -9,4 +9,4 @@
 
 lio_node:
   ros__parameters:
-    imu_sample_rate: 200
+    init_imu_samples: 100

@@ -15,6 +15,8 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
+find_package(spdlog REQUIRED)
+find_package(Sophus REQUIRED)
 
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -27,6 +29,7 @@ include_directories(
 
 add_executable(lio_node
 	src/lio_node.cpp
+    src/StateEstimator.cpp
 )
 
 ament_target_dependencies(lio_node
@@ -40,6 +43,7 @@ ament_target_dependencies(lio_node
 
 target_link_libraries(lio_node
 	yaml-cpp
+    spdlog::spdlog
 )
 
 install(TARGETS lio_node DESTINATION lib/${PROJECT_NAME})

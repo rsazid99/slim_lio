@@ -18,7 +18,10 @@
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 #include <vector>
-
+#include <deque>
+// SLIO Includes
+#include "slim_lio/StateEstimator.hpp"
+using namespace slio;
 class LioNode : public rclcpp::Node {
   public:
     LioNode() : Node("lio_node") {
@@ -26,17 +29,18 @@ class LioNode : public rclcpp::Node {
         this->declare_parameter<std::string>("imu_topic", "/livox/imu");
         this->declare_parameter<std::string>("lidar_topic", "/livox/lidar");
         this->declare_parameter<std::string>("config_file", "");
-        this->declare_parameter<int>("imu_sample_rate", 200);
+        this->declare_parameter<int>("init_imu_samples", 200);
 
         // Get parameters
         std::string imu_topic_ = this->get_parameter("imu_topic").as_string();
         std::string lidar_topic_ = this->get_parameter("lidar_topic").as_string();
         std::string config_file_ = this->get_parameter("config_file").as_string();
-        imu_sample_rate_ = this->get_parameter("imu_sample_rate").as_int();
+        init_imu_samples_ = this->get_parameter("init_imu_samples").as_int();
+        gravity_initialized_ = false;
 
         RCLCPP_INFO(this->get_logger(), "IMU topic: %s", imu_topic_.c_str());
         RCLCPP_INFO(this->get_logger(), "LiDAR topic: %s", lidar_topic_.c_str());
-        RCLCPP_INFO(this->get_logger(), "IMU sample rate: %d Hz", imu_sample_rate_);
+        RCLCPP_INFO(this->get_logger(), "IMU samples for gravity initialization %d", init_imu_samples_);
 
         // Create subscribers
         imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
@@ -47,15 +51,39 @@ class LioNode : public rclcpp::Node {
             lidar_topic_, 10, [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
                 this->lidarCallback(msg);
             });
+        estimator_ = std::make_shared<StateEstimator>();
     }
 
   private:
     void imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg) {
-        RCLCPP_INFO(this->get_logger(), "I Found IMU Data.");
+        double tstamp = msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9;
+
+        auto imu_data = std::make_shared<IMUData>(
+            tstamp, Eigen::Vector3f(msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z),
+            Eigen::Vector3f(msg->linear_acceleration.x, msg->linear_acceleration.y, msg->linear_acceleration.z)
+        );
+
+        if(!gravity_initialized_) {
+            init_imu_buffer_.push_back(*imu_data);
+
+            if(init_imu_buffer_.size() >= init_imu_samples_) {
+                if(estimator_->getGravityInit(init_imu_buffer_)) {
+                    RCLCPP_INFO(this->get_logger(), "Successfully initialized gravity.");
+                    gravity_initialized_ = true;
+                }
+                else {
+                    RCLCPP_INFO(this->get_logger(), "Couldn't initialize gravity.");
+                    init_imu_buffer_.clear();
+                }
+            }
+            return;
+        }
+
+        imu_measurements_.push_back(*imu_data);
     }
 
     void lidarCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
-        RCLCPP_INFO(this->get_logger(), "I Found LiDAR Data.");
+        //RCLCPP_INFO(this->get_logger(), "I Found LiDAR Data.");
     }
 
     // Subcriber
@@ -73,7 +101,11 @@ class LioNode : public rclcpp::Node {
     // TF broadcaster
     std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
-    int imu_sample_rate_;
+    int init_imu_samples_;
+    bool gravity_initialized_;
+    std::vector<IMUData> init_imu_buffer_;
+    std::shared_ptr<StateEstimator> estimator_;
+    std::deque<IMUData> imu_measurements_;
 };
 
 int main(int argc, char **argv) {
