@@ -8,7 +8,6 @@
  */
 
 #include "slim_lio/StateEstimator.hpp"
-
 namespace slio {
 
 StateEstimator::StateEstimator()
@@ -66,9 +65,17 @@ bool StateEstimator::getGravityInit(const std::vector<IMUData> &imu_buffer) {
     spdlog::info("[StateEstimator] Calculated gravity [{:3f}, {:3f}, {:3f}], accelerometer bias [{:3f}, {:3f}, {:3f}]",
                  current_state.gravity.x(), current_state.gravity.y(), current_state.gravity.z(), current_state.bias_acc.x(),
                  current_state.bias_acc.y(), current_state.bias_acc.z());
+
     g_initialized = true;
+
+    current_state.covariance.block<3, 3>(0, 0) *= 0.01f;
+    current_state.covariance.block<3, 3>(3, 3) *= 1.0f;
+    current_state.covariance.block<3, 3>(6, 6) *= 0.1f;
+    current_state.covariance.block<3, 3>(9, 9) *= 0.0001f;
+    current_state.covariance.block<3, 3>(12, 12) *= 0.001f;
+    current_state.covariance.block<3, 3>(15, 15) *= 0.001f;
 
     return true;
 }
 
-} // namespace slio
+}

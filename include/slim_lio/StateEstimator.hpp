@@ -10,40 +10,14 @@
 #ifndef STATEESTIMATOR_H
 #define STATEESTIMATOR_H
 
+#include "slim_lio/types.hpp"
+#include "spdlog/spdlog.h"
 #include <Eigen/Dense>
-#include <vector>
+#include <iostream>
 #include <math.h>
 #include <sophus/se3.hpp>
-#include <iostream>
-#include "spdlog/spdlog.h"
-
+#include <vector>
 namespace slio {
-
-struct IMUData {
-    double dt;
-    Eigen::Vector3f gyro, acc;
-
-    IMUData(double _dt, const Eigen::Vector3f _gyro, const Eigen::Vector3f _acc) {
-        dt = _dt;
-        gyro = _gyro;
-        acc = _acc;
-    }
-};
-
-struct State {
-    Eigen::Vector3f position, velocity, bias_gyro, bias_acc, gravity;
-    Eigen::Matrix3f rotation;
-
-    Eigen::Matrix<float, 18, 18> covariance;
-
-    State() {
-        rotation = Eigen::Matrix3f::Identity();
-        position = velocity = bias_gyro = bias_acc = Eigen::Vector3f::Zero();
-        gravity = Eigen::Vector3f(0, 0, -9.81);
-        covariance = Eigen::Matrix<float, 18, 18>::Identity() * 0.001;
-    }
-};
-
 class StateEstimator {
   public:
     StateEstimator();
@@ -58,5 +32,4 @@ class StateEstimator {
 };
 
 } // namespace slio
-
 #endif // STATEESTIMATOR_H

@@ -7,6 +7,7 @@
  * Copyright ©Sazid Rahman Simanto All rights reserved
  */
 
+#include <deque>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <memory>
@@ -18,9 +19,10 @@
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 #include <vector>
-#include <deque>
 // SLIO Includes
 #include "slim_lio/StateEstimator.hpp"
+#include "slim_lio/types.hpp"
+#include "slim_lio/utils.hpp"
 using namespace slio;
 class LioNode : public rclcpp::Node {
   public:
@@ -56,22 +58,20 @@ class LioNode : public rclcpp::Node {
 
   private:
     void imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg) {
-        double tstamp = msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9;
+        float tstamp = msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9;
 
         auto imu_data = std::make_shared<IMUData>(
             tstamp, Eigen::Vector3f(msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z),
-            Eigen::Vector3f(msg->linear_acceleration.x, msg->linear_acceleration.y, msg->linear_acceleration.z)
-        );
-
-        if(!gravity_initialized_) {
+            Eigen::Vector3f(msg->linear_acceleration.x, msg->linear_acceleration.y, msg->linear_acceleration.z));
+        // RCLCPP_INFO(this->get_logger(), "gravity Init %d.", gravity_initialized_);
+        if (!gravity_initialized_) {
             init_imu_buffer_.push_back(*imu_data);
 
-            if(init_imu_buffer_.size() >= init_imu_samples_) {
-                if(estimator_->getGravityInit(init_imu_buffer_)) {
+            if (init_imu_buffer_.size() >= init_imu_samples_) {
+                if (estimator_->getGravityInit(init_imu_buffer_)) {
                     RCLCPP_INFO(this->get_logger(), "Successfully initialized gravity.");
                     gravity_initialized_ = true;
-                }
-                else {
+                } else {
                     RCLCPP_INFO(this->get_logger(), "Couldn't initialize gravity.");
                     init_imu_buffer_.clear();
                 }
@@ -83,7 +83,13 @@ class LioNode : public rclcpp::Node {
     }
 
     void lidarCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
-        //RCLCPP_INFO(this->get_logger(), "I Found LiDAR Data.");
+        // RCLCPP_INFO(this->get_logger(), "I Found LiDAR Data.");
+        float tstamp = msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9;
+        std::vector<PointCloud> points;
+
+        parsePointcloud(msg, points);
+        // undistortPointcloud(points, intensity, timestamps);
+        RCLCPP_INFO(this->get_logger(), " Size of pointcloud %d", points.size());
     }
 
     // Subcriber
