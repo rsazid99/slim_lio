@@ -18,37 +18,54 @@
 namespace slio {
 
 struct IMUData {
-    double dt;
+    float dt, timestamp;
     Eigen::Vector3f gyro, acc;
 
-    IMUData(double _dt, const Eigen::Vector3f _gyro, const Eigen::Vector3f _acc) {
+    IMUData(float _dt, float _timestamp, const Eigen::Vector3f _gyro, const Eigen::Vector3f _acc) {
         dt = _dt;
+        timestamp = _timestamp;
         gyro = _gyro;
         acc = _acc;
     }
 };
 
 struct PointCloud {
-    float x, y, z, intensity, timestamp;
+    float intensity, timestamp;
+    Eigen::Vector3f xyz;
 
     PointCloud(float _x, float _y, float _z, float _intensity, float _timestamp) {
-        x = _x, y = _y, z = _z, intensity = _intensity, timestamp = _timestamp;
+        xyz = Eigen::Vector3f(_x, _y, _z);
+        intensity = _intensity, timestamp = _timestamp;
     }
 };
 
 struct State {
     Eigen::Vector3f position, velocity, bias_gyro, bias_acc, gravity;
-    Eigen::Matrix3f rotation;
+    Sophus::SO3f rotation;
 
     Eigen::Matrix<float, 18, 18> covariance;
 
     State() {
-        rotation = Eigen::Matrix3f::Identity();
+        rotation = Sophus::SO3f();
         position = velocity = bias_gyro = bias_acc = Eigen::Vector3f::Zero();
         gravity = Eigen::Vector3f(0, 0, -9.81);
         covariance = Eigen::Matrix<float, 18, 18>::Identity() * 0.001;
     }
 };
+
+struct StateWithStamp {
+    Eigen::Vector3f position, velocity;
+    Sophus::SO3f rotation;
+    float timestamp;
+
+    StateWithStamp(float _tstamp, Sophus::SO3f _rot, Eigen::Vector3f _pos, Eigen::Vector3f _vel) {
+        timestamp = _tstamp;
+        rotation = _rot;
+        position = _pos;
+        velocity = _vel;
+    }
+};
+
 
 } // namespace slio
 

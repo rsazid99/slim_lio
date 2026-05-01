@@ -13,6 +13,7 @@
 #include "slim_lio/types.hpp"
 #include "spdlog/spdlog.h"
 #include <Eigen/Dense>
+#include <deque>
 #include <iostream>
 #include <math.h>
 #include <sophus/se3.hpp>
@@ -24,11 +25,13 @@ class StateEstimator {
     ~StateEstimator();
 
     bool getGravityInit(const std::vector<IMUData> &imu_buffer);
+    void propagateIMU(const IMUData &imu_data);
+    void undistortPointcloud(std::vector<PointCloud> &points);
 
   private:
     State current_state;
     bool g_initialized;
-    double g_imu_dt;
+    std::vector<StateWithStamp> preintegration_list;
 };
 
 } // namespace slio

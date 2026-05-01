@@ -11,7 +11,7 @@
 namespace slio {
 
 StateEstimator::StateEstimator()
-    : current_state(), g_initialized(false), g_imu_dt(0.0) {
+    : current_state(), g_initialized(false) {
 }
 
 StateEstimator::~StateEstimator() {
@@ -27,11 +27,9 @@ bool StateEstimator::getGravityInit(const std::vector<IMUData> &imu_buffer) {
     for (const auto &imu : imu_buffer) {
         mean_gyro += imu.gyro;
         mean_acc += imu.acc;
-        g_imu_dt += imu.dt;
     }
     mean_gyro /= imu_buffer.size();
     mean_acc /= imu_buffer.size();
-    g_imu_dt /= imu_buffer.size();
 
     float var_gyro = 0.0, var_acc = 0.0;
 
@@ -76,6 +74,33 @@ bool StateEstimator::getGravityInit(const std::vector<IMUData> &imu_buffer) {
     current_state.covariance.block<3, 3>(15, 15) *= 0.001f;
 
     return true;
+}
+
+void StateEstimator::propagateIMU(const IMUData &imu_data) {
+    Eigen::Vector3f omega = imu_data.gyro - current_state.bias_gyro;
+    Eigen::Vector3f acc = imu_data.acc - current_state.bias_acc;
+    float dt = imu_data.dt;
+
+    Sophus::SO3f dR = Sophus::SO3f::exp(omega * dt);
+    Eigen::Vector3f acc_world = current_state.rotation * acc + current_state.gravity; // acceleration in world frame
+
+    current_state.rotation *=  dR;
+    current_state.position += current_state.velocity * dt + 0.5 * acc_world * dt * dt;
+    current_state.velocity += acc_world * dt;
+
+    // To do -- update covariance matrix ---
+
+    StateWithStamp state_stamp = StateWithStamp(imu_data.timestamp, current_state.rotation, current_state.position, current_state.velocity);
+    preintegration_list.push_back(state_stamp);
+}
+
+
+void StateEstimator::undistortPointcloud(std::vector<PointCloud> &points) {
+    std::vector<StateWithStamp>:: iterator it = preintegration_list.begin();
+
+    for(int iter = 0; iter < points.size(); iter++) {
+        while(*it->timestamp)
+    }
 }
 
 }
