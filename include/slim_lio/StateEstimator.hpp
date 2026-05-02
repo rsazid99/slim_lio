@@ -17,6 +17,7 @@
 #include <deque>
 #include <iostream>
 #include <math.h>
+#include <mutex>
 #include <sophus/se3.hpp>
 #include <vector>
 namespace slio {
@@ -28,13 +29,15 @@ class StateEstimator {
     bool getGravityInit(const std::vector<IMUData> &imu_buffer);
     void propagateIMU(const IMUData &imu_data);
     void undistortPointcloud(std::vector<PointCloud> &points);
+    int getPreintegrationListSize();
 
   private:
     State current_state;
     bool g_initialized;
-    std::vector<StateWithStamp> preint_list;
-	Eigen::Matrix3f R_lidar_imu = Eigen::Matrix3f::Identity();
-	Eigen::Vector3f t_lidar_imu = Eigen::Vector3f(0.0110f, 0.02329f, -0.04412f);
+    std::mutex preint_mutex;
+    std::deque<StateWithStamp> preint_list;
+    Eigen::Matrix3f R_lidar_imu = Eigen::Matrix3f::Identity();
+    Eigen::Vector3f t_lidar_imu = Eigen::Vector3f(0.0110, 0.02329, -0.04412);
     Sophus::SE3f T_lidar_imu = Sophus::SE3f(R_lidar_imu, t_lidar_imu);
 };
 

@@ -18,10 +18,10 @@
 namespace slio {
 
 struct IMUData {
-    float dt, timestamp;
+    double dt, timestamp;
     Eigen::Vector3f gyro, acc;
 
-    IMUData(float _dt, float _timestamp, const Eigen::Vector3f _gyro, const Eigen::Vector3f _acc) {
+    IMUData(double _dt, double _timestamp, const Eigen::Vector3f _gyro, const Eigen::Vector3f _acc) {
         dt = _dt;
         timestamp = _timestamp;
         gyro = _gyro;
@@ -30,10 +30,11 @@ struct IMUData {
 };
 
 struct PointCloud {
-    float intensity, timestamp;
+    float intensity;
+    double timestamp;
     Eigen::Vector3f xyz;
 
-    PointCloud(float _x, float _y, float _z, float _intensity, float _timestamp) {
+    PointCloud(float _x, float _y, float _z, float _intensity, double _timestamp) {
         xyz = Eigen::Vector3f(_x, _y, _z);
         intensity = _intensity, timestamp = _timestamp;
     }
@@ -56,9 +57,9 @@ struct State {
 struct StateWithStamp {
     Eigen::Vector3f position, velocity, gyro, accel, gravity;
     Sophus::SO3f rotation;
-    float timestamp;
+    double timestamp;
 
-    StateWithStamp(float _tstamp, Eigen::Vector3f _gyro, Eigen::Vector3f _accel, 
+    StateWithStamp(double _tstamp, Eigen::Vector3f _gyro, Eigen::Vector3f _accel, 
         Sophus::SO3f _rot, Eigen::Vector3f _pos, Eigen::Vector3f _vel, Eigen::Vector3f _gravity) {
         timestamp = _tstamp;
         gyro = _gyro;

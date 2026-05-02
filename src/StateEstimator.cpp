@@ -79,7 +79,7 @@ bool StateEstimator::getGravityInit(const std::vector<IMUData> &imu_buffer) {
 void StateEstimator::propagateIMU(const IMUData &imu_data) {
     Eigen::Vector3f omega = imu_data.gyro - current_state.bias_gyro;
     Eigen::Vector3f acc = imu_data.acc - current_state.bias_acc;
-    float dt = imu_data.dt;
+    double dt = imu_data.dt;
 
     Sophus::SO3f dR = Sophus::SO3f::exp(omega * dt);
     Sophus::SO3f R = current_state.rotation * dR;
@@ -87,44 +87,55 @@ void StateEstimator::propagateIMU(const IMUData &imu_data) {
 
     StateWithStamp state_stamp = StateWithStamp(imu_data.timestamp, omega, acc,
                                                 current_state.rotation, current_state.position, current_state.velocity, current_state.gravity);
-    preint_list.push_back(state_stamp);
+    {
+        std::lock_guard<std::mutex> lock(preint_mutex);
+        preint_list.push_back(state_stamp);
+    }
 
     current_state.rotation = R;
     current_state.position += current_state.velocity * dt + 0.5 * acc_world * dt * dt;
     current_state.velocity += acc_world * dt;
 
     // To do -- update covariance matrix ---
-
+    spdlog::info("propagated imu measurement time: {}", imu_data.timestamp);
 
 }
 
 void StateEstimator::undistortPointcloud(std::vector<PointCloud> &points) {
-
-    auto end_it = lower_bound(preint_list.begin(), preint_list.end(), points.back().timestamp, [](const StateWithStamp &a, float value) {
-        return a.timestamp < value;
+    std::deque<StateWithStamp> tmp_preint_list;
+    {
+        std::lock_guard<std::mutex> lock(preint_mutex);
+        tmp_preint_list = preint_list;
+    }
+    auto end_it = upper_bound(tmp_preint_list.begin(), tmp_preint_list.end(), points.back().timestamp, [](double value, const StateWithStamp &a) {
+        return value < a.timestamp;
     });
+    spdlog::info("The lowerbound tstamp {}, last pointcloud tstamp {}", end_it->timestamp, points.back().timestamp);
     Sophus::SE3f T_imu_odom = Sophus::SE3f(end_it->rotation, end_it->position).inverse();
     for (size_t iter = 0; iter < points.size(); iter++) {
-        auto it = lower_bound(preint_list.begin(), preint_list.end(), points[iter].timestamp, [](const StateWithStamp &a, float value) {
+        auto it = lower_bound(tmp_preint_list.begin(), tmp_preint_list.end(), points[iter].timestamp, [](const StateWithStamp &a, double value) {
             return a.timestamp < value;
         });
-
-        if (it == preint_list.begin())
-            continue;
-
         it--;
-
-        const float dt = points[iter].timestamp - it->timestamp;
-        const Sophus::SO3f dR = Sophus::SO3f::exp(it->gyro * dt);
-        const Sophus::SO3f R = it->rotation * dR;
+        double dt = points[iter].timestamp - it->timestamp;
+        Sophus::SO3f dR = Sophus::SO3f::exp(it->gyro * dt);
+        Sophus::SO3f R = it->rotation * dR;
+        
         Eigen::Vector3f acc_world = R * it->accel + it->gravity;
         Eigen::Vector3f pos = it->position + it->velocity * dt + 0.5 * acc_world * dt * dt;
-
         Sophus::SE3f T_odom_imu(R, pos);
-        Sophus::SE3f T_odom_imu_prev(it->rotation, it->position);
-
         points[iter].xyz = T_imu_odom * T_odom_imu * T_lidar_imu * points[iter].xyz;
     }
+    {
+        std::lock_guard<std::mutex> lock(preint_mutex);
+        while(!preint_list.empty() && preint_list.front().timestamp < points.front().timestamp) preint_list.pop_front();
+    }
+    tmp_preint_list.clear();
+    spdlog::info("The size of preint queue is {}", preint_list.size());
+}
+
+int StateEstimator::getPreintegrationListSize() {
+    return preint_list.size();
 }
 
 } // namespace slio
