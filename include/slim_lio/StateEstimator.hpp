@@ -13,6 +13,7 @@
 #include "slim_lio/types.hpp"
 #include "spdlog/spdlog.h"
 #include <Eigen/Dense>
+#include <algorithm>
 #include <deque>
 #include <iostream>
 #include <math.h>
@@ -31,7 +32,10 @@ class StateEstimator {
   private:
     State current_state;
     bool g_initialized;
-    std::vector<StateWithStamp> preintegration_list;
+    std::vector<StateWithStamp> preint_list;
+	Eigen::Matrix3f R_lidar_imu = Eigen::Matrix3f::Identity();
+	Eigen::Vector3f t_lidar_imu = Eigen::Vector3f(0.0110f, 0.02329f, -0.04412f);
+    Sophus::SE3f T_lidar_imu = Sophus::SE3f(R_lidar_imu, t_lidar_imu);
 };
 
 } // namespace slio

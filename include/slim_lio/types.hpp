@@ -1,11 +1,11 @@
 /*
  * @file            include/slim_lio/types.hpp
- * @description     
+ * @description
  * @author          rsazid99 <rsazid99@gmail.com>
  * @createTime      2026-04-26 02:08:53
  * @lastModified    2026-04-26 02:10:01
  * Copyright ©Sazid Rahman Simanto All rights reserved
-*/
+ */
 
 #ifndef TYPES_H
 #define TYPES_H
@@ -54,18 +54,21 @@ struct State {
 };
 
 struct StateWithStamp {
-    Eigen::Vector3f position, velocity;
+    Eigen::Vector3f position, velocity, gyro, accel, gravity;
     Sophus::SO3f rotation;
     float timestamp;
 
-    StateWithStamp(float _tstamp, Sophus::SO3f _rot, Eigen::Vector3f _pos, Eigen::Vector3f _vel) {
+    StateWithStamp(float _tstamp, Eigen::Vector3f _gyro, Eigen::Vector3f _accel, 
+        Sophus::SO3f _rot, Eigen::Vector3f _pos, Eigen::Vector3f _vel, Eigen::Vector3f _gravity) {
         timestamp = _tstamp;
+        gyro = _gyro;
+        accel = _accel;
         rotation = _rot;
         position = _pos;
         velocity = _vel;
+        gravity = _gravity;
     }
 };
-
 
 } // namespace slio
 

@@ -81,12 +81,14 @@ class LioNode : public rclcpp::Node {
             return;
         }
         estimator_->propagateIMU(*imu_data);
-        if(!propagation_started_) propagation_started_ = true;
+        if (!propagation_started_)
+            propagation_started_ = true;
     }
 
     void lidarCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
         // RCLCPP_INFO(this->get_logger(), "I Found LiDAR Data.");
-        if(!gravity_initialized_ || !propagation_started_) return;
+        if (!gravity_initialized_ || !propagation_started_)
+            return;
 
         float tstamp = msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9;
         std::vector<PointCloud> points;
