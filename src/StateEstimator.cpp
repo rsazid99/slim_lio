@@ -60,9 +60,9 @@ bool StateEstimator::getGravityInit(const std::vector<IMUData> &imu_buffer) {
     current_state.gravity = R_align * current_state.gravity;
     current_state.bias_gyro = mean_gyro;
     current_state.bias_acc = mean_acc - R_align.transpose() * up;
-    spdlog::info("[StateEstimator] Calculated gravity [{:3f}, {:3f}, {:3f}], accelerometer bias [{:3f}, {:3f}, {:3f}]",
-                 current_state.gravity.x(), current_state.gravity.y(), current_state.gravity.z(), current_state.bias_acc.x(),
-                 current_state.bias_acc.y(), current_state.bias_acc.z());
+    // spdlog::info("[StateEstimator] Calculated gravity [{:3f}, {:3f}, {:3f}], accelerometer bias [{:3f}, {:3f}, {:3f}]",
+    //              current_state.gravity.x(), current_state.gravity.y(), current_state.gravity.z(), current_state.bias_acc.x(),
+    //              current_state.bias_acc.y(), current_state.bias_acc.z());
 
     g_initialized = true;
 
@@ -88,7 +88,7 @@ void StateEstimator::propagateIMU(const IMUData &imu_data) {
     StateWithStamp state_stamp = StateWithStamp(imu_data.timestamp, omega, acc,
                                                 current_state.rotation, current_state.position, current_state.velocity, current_state.gravity);
     {
-        std::lock_guard<std::mutex> lock(preint_mutex);
+        std::lock_guard<std::mutex> lock(state_estimator_mutex);
         preint_list.push_back(state_stamp);
     }
 
@@ -97,20 +97,20 @@ void StateEstimator::propagateIMU(const IMUData &imu_data) {
     current_state.velocity += acc_world * dt;
 
     // To do -- update covariance matrix ---
-    spdlog::info("propagated imu measurement time: {}", imu_data.timestamp);
+    //spdlog::info("propagated imu measurement time: {}", imu_data.timestamp);
 
 }
 
 void StateEstimator::undistortPointcloud(std::vector<PointCloud> &points) {
     std::deque<StateWithStamp> tmp_preint_list;
     {
-        std::lock_guard<std::mutex> lock(preint_mutex);
+        std::lock_guard<std::mutex> lock(state_estimator_mutex);
         tmp_preint_list = preint_list;
     }
     auto end_it = upper_bound(tmp_preint_list.begin(), tmp_preint_list.end(), points.back().timestamp, [](double value, const StateWithStamp &a) {
         return value < a.timestamp;
     });
-    spdlog::info("The lowerbound tstamp {}, last pointcloud tstamp {}", end_it->timestamp, points.back().timestamp);
+    //spdlog::info("The upperbound tstamp {}, last pointcloud tstamp {}", end_it->timestamp, points.back().timestamp);
     Sophus::SE3f T_imu_odom = Sophus::SE3f(end_it->rotation, end_it->position).inverse();
     for (size_t iter = 0; iter < points.size(); iter++) {
         auto it = lower_bound(tmp_preint_list.begin(), tmp_preint_list.end(), points[iter].timestamp, [](const StateWithStamp &a, double value) {
@@ -124,18 +124,28 @@ void StateEstimator::undistortPointcloud(std::vector<PointCloud> &points) {
         Eigen::Vector3f acc_world = R * it->accel + it->gravity;
         Eigen::Vector3f pos = it->position + it->velocity * dt + 0.5 * acc_world * dt * dt;
         Sophus::SE3f T_odom_imu(R, pos);
-        points[iter].xyz = T_imu_odom * T_odom_imu * T_lidar_imu * points[iter].xyz;
+        points[iter].xyz = T_imu_odom * T_odom_imu * points[iter].xyz;
     }
     {
-        std::lock_guard<std::mutex> lock(preint_mutex);
+        std::lock_guard<std::mutex> lock(state_estimator_mutex);
         while(!preint_list.empty() && preint_list.front().timestamp < points.front().timestamp) preint_list.pop_front();
     }
     tmp_preint_list.clear();
-    spdlog::info("The size of preint queue is {}", preint_list.size());
+    //spdlog::info("The size of preint queue is {}", preint_list.size());
 }
 
 int StateEstimator::getPreintegrationListSize() {
-    return preint_list.size();
+    {
+        std::lock_guard<std::mutex> lock(state_estimator_mutex);
+        return preint_list.size();
+    }
+}
+
+Sophus::SE3f StateEstimator::getCurrentPose() {
+    {
+        std::lock_guard<std::mutex> lock(state_estimator_mutex);
+        return Sophus::SE3f(current_state.rotation, current_state.position);
+    }
 }
 
 } // namespace slio

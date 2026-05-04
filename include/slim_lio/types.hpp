@@ -71,6 +71,11 @@ struct StateWithStamp {
     }
 };
 
+struct VoxelData {
+    Eigen::Vector3f sum = Eigen::Vector3f::Zero();
+    int count = 0;
+};
+
 } // namespace slio
 
 #endif // TYPES_H

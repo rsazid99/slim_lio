@@ -30,15 +30,13 @@ class StateEstimator {
     void propagateIMU(const IMUData &imu_data);
     void undistortPointcloud(std::vector<PointCloud> &points);
     int getPreintegrationListSize();
+    Sophus::SE3f getCurrentPose();
 
   private:
     State current_state;
     bool g_initialized;
-    std::mutex preint_mutex;
+    std::mutex state_estimator_mutex;
     std::deque<StateWithStamp> preint_list;
-    Eigen::Matrix3f R_lidar_imu = Eigen::Matrix3f::Identity();
-    Eigen::Vector3f t_lidar_imu = Eigen::Vector3f(0.0110, 0.02329, -0.04412);
-    Sophus::SE3f T_lidar_imu = Sophus::SE3f(R_lidar_imu, t_lidar_imu);
 };
 
 } // namespace slio

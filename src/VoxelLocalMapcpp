@@ -1,0 +1,78 @@
+/*
+ * @file            src/VoxelMap.cpp
+ * @description     
+ * @author          rsazid99 <rsazid99@gmail.com>
+ * @createTime      2026-05-03 14:20:25
+ * @lastModified    2026-05-03 14:20:25
+ * Copyright ©Sazid Rahman Simanto All rights reserved
+*/
+
+#include "slim_lio/VoxelLocalMap.hpp"
+
+
+
+namespace slio {
+
+VoxelLocalMap::VoxelLocalMap(double _voxel_size, int _max_voxel, int _min_points, double _min_planarity) {
+    voxel_size = _voxel_size;
+    max_voxel = _max_voxel;
+    min_points = _min_points;
+    min_planarity = _min_planarity;
+    inv_voxel_size = 1.0 / voxel_size;
+    keyframe_empty = true;
+    translation_th = 3.0f;
+    angle_th = 90.0f * (3.1416f / 180.0f);
+    const int buffer_size = 25;
+    poses = boost::circular_buffer<Sophus::SE3f>(buffer_size);
+    scan_clouds = boost::circular_buffer<std::vector<Eigen::Vector3f>>(buffer_size);
+}
+
+std::vector<Eigen::Vector3f> VoxelLocalMap::filterPointCloud(const std::vector<Eigen::Vector3f> &points) {
+    std::unordered_map<uint64_t, VoxelData> voxel_map;
+
+    for(auto p: points) {
+        int ix = static_cast<int>(std::floor(p[0] * inv_voxel_size));
+        int iy = static_cast<int>(std::floor(p[1] * inv_voxel_size));
+        int iz = static_cast<int>(std::floor(p[2] * inv_voxel_size));
+
+        uint64_t key = encodeKey(ix, iy, iz);
+
+        auto& v = voxel_map[key];
+        v.sum += p;
+        v.count ++;
+    }
+    std::vector<Eigen::Vector3f> downsampled; 
+    for (auto it: voxel_map) {
+        downsampled.push_back(it.second.sum / it.second.count);
+    }
+
+    return downsampled;
+}
+
+bool VoxelLocalMap::isKeyframe(Sophus::SE3f pose) {
+    if(keyframe_empty) return true;
+
+    Sophus::SE3f dT = last_pose.inverse() * pose;
+
+    if(dT.translation().norm() > translation_th || dT.so3().log().norm() > angle_th) return true;
+
+    return false;
+}
+
+void VoxelLocalMap::addKeyframe(Sophus::SE3f pose, std::vector<Eigen::Vector3f> points) {
+    if(keyframe_empty) {
+        keyframe_empty = false;
+    }
+    poses.push_back(pose);
+    scan_clouds.push_back(points);
+    std::vector<Eigen::Vector3f> all_points;
+    
+    for(size_t i = 0; i < scan_clouds.size(); i ++) {
+        for(auto it: scan_clouds[i]) all_points.push_back(it);
+    }
+
+    downsampled_map = filterPointCloud(all_points);
+    last_pose = pose;
+}
+
+}

@@ -10,3 +10,10 @@
 lio_node:
   ros__parameters:
     init_imu_samples: 100
+    #extrinsic parameter from lidar to imu sensor
+    R_il: [
+      1.0, 0.0, 0.0,
+      0.0, 1.0, 0.0,
+      0.0, 0.0, 1.0
+    ]
+    t_il: [-0.011, -0.02329, 0.04412]
