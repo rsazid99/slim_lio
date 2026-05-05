@@ -21,9 +21,10 @@ public:
     VoxelLocalMap(double _voxel_size, int _max_voxel, int _min_points, double _min_planarity);
     ~VoxelLocalMap();
 
-    std::vector<Eigen::Vector3f> filterPointCloud(const std::vector<Eigen::Vector3f> &points);
+    std::vector<Eigen::Vector3f> filterPointCloud(const std::vector<PointCloud>& points);
     bool isKeyframe(Sophus::SE3f pose);
-    void addKeyframe(Sophus::SE3f pose, std::vector<Eigen::Vector3f> points);
+    void addKeyframe(Sophus::SE3f pose, std::vector<PointCloud>& points);
+    std::vector<Correspondence> VoxelLocalMap::findCorrespondence(const std::vector<Eigen::Vector3f>& points, double max_distance);
 
 private:
     static constexpr int OFFSET = 1 << 20;
@@ -37,7 +38,8 @@ private:
     bool keyframe_empty;
     boost::circular_buffer<Sophus::SE3f> poses;
     boost::circular_buffer<std::vector<Eigen::Vector3f>> scan_clouds;
-    std::vector<Eigen::Vector3f> downsampled_map;
+    std::unordered_map<uint64_t, VoxelData> voxel_map;
+    std::vector<Eigen::Vector3f> local_map;
 };
 
 }

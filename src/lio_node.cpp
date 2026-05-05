@@ -126,18 +126,19 @@ private:
         parsePointcloud(msg, points);
         RCLCPP_INFO(this->get_logger(), "Successfully parsed LiDAR pointclouds.");
         // Transformed lidar pointcloud from lidar to imu frame
-        std::vector<Eigen::Vector3f> points_imu;
         for(auto it: points) {
-            points_imu.push_back(T_il_ * it.xyz);
+            it.xyz = T_il_ * it.xyz;
         }
         if(!local_map_initialized_) {
             local_map_initialized_ = true;
-            voxel_local_map_->addKeyframe(estimator_->getCurrentPose(), points_imu);
+            voxel_local_map_->addKeyframe(estimator_->getCurrentPose(), points);
             return;
         }
         estimator_->undistortPointcloud(points);
+        std::vector<Eigen::Vector3f> downsampled_points = voxel_local_map_->filterPointCloud(points);
+        
         if(voxel_local_map_->isKeyframe(estimator_->getCurrentPose())) {
-            voxel_local_map_->addKeyframe(estimator_->getCurrentPose(), points_imu);
+            voxel_local_map_->addKeyframe(estimator_->getCurrentPose(), points);
         }
         // undistortPointcloud(points, intensity, timestamps);
         RCLCPP_INFO(this->get_logger(), " Size of pointcloud %ld", points.size());

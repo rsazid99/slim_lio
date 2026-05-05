@@ -27,27 +27,28 @@ VoxelLocalMap::VoxelLocalMap(double _voxel_size, int _max_voxel, int _min_points
     scan_clouds = boost::circular_buffer<std::vector<Eigen::Vector3f>>(buffer_size);
 }
 
-std::vector<Eigen::Vector3f> VoxelLocalMap::filterPointCloud(const std::vector<Eigen::Vector3f> &points) {
-    std::unordered_map<uint64_t, VoxelData> voxel_map;
+std::vector<Eigen::Vector3f> VoxelLocalMap::filterPointCloud(const std::vector<PointCloud>& points) {
+    std::unordered_map<uint64_t, VoxelData> scan_map;
 
     for(auto p: points) {
-        int ix = static_cast<int>(std::floor(p[0] * inv_voxel_size));
-        int iy = static_cast<int>(std::floor(p[1] * inv_voxel_size));
-        int iz = static_cast<int>(std::floor(p[2] * inv_voxel_size));
+        int ix = static_cast<int>(std::floor(p.xyz[0] * inv_voxel_size));
+        int iy = static_cast<int>(std::floor(p.xyz[1] * inv_voxel_size));
+        int iz = static_cast<int>(std::floor(p.xyz[2] * inv_voxel_size));
 
         uint64_t key = encodeKey(ix, iy, iz);
 
-        auto& v = voxel_map[key];
-        v.sum += p;
+        auto& v = scan_map[key];
+        v.sum += p.xyz;
         v.count ++;
     }
     std::vector<Eigen::Vector3f> downsampled; 
-    for (auto it: voxel_map) {
+    for (auto it: scan_map) {
         downsampled.push_back(it.second.sum / it.second.count);
     }
 
     return downsampled;
 }
+
 
 bool VoxelLocalMap::isKeyframe(Sophus::SE3f pose) {
     if(keyframe_empty) return true;
@@ -59,20 +60,87 @@ bool VoxelLocalMap::isKeyframe(Sophus::SE3f pose) {
     return false;
 }
 
-void VoxelLocalMap::addKeyframe(Sophus::SE3f pose, std::vector<Eigen::Vector3f> points) {
+void VoxelLocalMap::addKeyframe(Sophus::SE3f pose, std::vector<PointCloud>& points) {
     if(keyframe_empty) {
         keyframe_empty = false;
     }
+
     poses.push_back(pose);
-    scan_clouds.push_back(points);
-    std::vector<Eigen::Vector3f> all_points;
-    
+    last_pose = pose;
+    voxel_map.clear();
+    local_map.clear();
+
+    std::vector<Eigen::Vector3f> point_vec;
+    for(auto it: points)
+        point_vec.push_back(it.xyz);
+
+    scan_clouds.push_back(point_vec);
+
+    std::vector<Eigen::Vector3f> all_points;    
     for(size_t i = 0; i < scan_clouds.size(); i ++) {
         for(auto it: scan_clouds[i]) all_points.push_back(it);
     }
 
-    downsampled_map = filterPointCloud(all_points);
-    last_pose = pose;
+    for(auto p: all_points) {
+        int ix = static_cast<int>(std::floor(p[0] * inv_voxel_size));
+        int iy = static_cast<int>(std::floor(p[1] * inv_voxel_size));
+        int iz = static_cast<int>(std::floor(p[2] * inv_voxel_size));
+
+        uint64_t key = encodeKey(ix, iy, iz);
+
+        auto& v = voxel_map[key];
+        v.sum += p;
+        v.pp_T_sum += p * p.transpose();
+        v.count ++;
+    }
+    
+    for (auto it: voxel_map) {
+        double inv_n = 1.0 / it.second.count;
+        Eigen::Vector3d centroid = it.second.sum * inv_n;
+        local_map.push_back((centroid).cast<float>());
+        // Covariance: E[XX^T] - miu*miu^T
+        Eigen::Matrix3d cov = it.second.pp_T_sum * inv_n - (centroid * centroid.transpose());
+
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eig(cov);
+        Eigen::Vector3d eigenvalues = eig.eigenvalues();
+        it.second.nomal = eig.eigenvectors().col(0).normalized();
+        // linearity  = (λ2 - λ1) / λ2;
+        // planarity  = (λ1 - λ0) / λ2;
+        // scattering =  λ0 / λ2;
+        it.second.planarity = (eigenvalues(1) - eigenvalues(0)) / (eigenvalues(2) + 1e-6);
+        it.second.valid = (it.second.planarity >= min_planarity);
+    }
+
+
+    
+}
+
+std::vector<Correspondence> VoxelLocalMap::findCorrespondence(const std::vector<Eigen::Vector3f>& points, double max_distance) {
+    double max_dist_sq = max_distance * max_distance;
+    std::vector<Correspondence> results;
+    
+    for(auto p: points) {
+        int ix = static_cast<int>(std::floor(p[0] * inv_voxel_size));
+        int iy = static_cast<int>(std::floor(p[1] * inv_voxel_size));
+        int iz = static_cast<int>(std::floor(p[2] * inv_voxel_size));
+
+        Correspondence best;
+        best.point = Eigen::Vector3f::Zero();
+        best.normal = Eigen::Vector3f::Zero();
+        bool found = false;
+
+        for(int dx = -2; dx <= 2; dx++) {
+            for(int dy = -2; dy <= 2; dy++) {
+                for(int dz = -2; dz <= 2; dz++) {
+                    uint64_t key = encodeKey(ix + dx, iy + dy, iz + dz);
+                    auto it = local_map.find(key);
+                }
+            }
+        }
+    }
+
+
+
 }
 
 }
