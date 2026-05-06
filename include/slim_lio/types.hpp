@@ -72,8 +72,9 @@ struct StateWithStamp {
 };
 
 struct VoxelData {
-    Eigen::Vector3d sum = Eigen::Vector3f::Zero();
-    Eigen::Matrix3d pp_T_sum = Eigen::Matrix3f::Zero();
+    Eigen::Vector3d sum = Eigen::Vector3d::Zero();
+    Eigen::Vector3f centroid  = Eigen::Vector3f::Zero();
+    Eigen::Matrix3d pp_T_sum = Eigen::Matrix3d::Zero();
     int count = 0;
     bool valid = false;
     Eigen::Vector3f nomal = Eigen::Vector3f::Zero();
@@ -81,7 +82,8 @@ struct VoxelData {
 };
 
 struct Correspondence {
-    Eigen::Vector3f point, normal;
+    Eigen::Vector3f centroid, normal;
+    bool found;
 };
 
 } // namespace slio

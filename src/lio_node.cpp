@@ -136,7 +136,8 @@ private:
         }
         estimator_->undistortPointcloud(points);
         std::vector<Eigen::Vector3f> downsampled_points = voxel_local_map_->filterPointCloud(points);
-        
+        estimator_->updateState(downsampled_points, voxel_local_map_);
+
         if(voxel_local_map_->isKeyframe(estimator_->getCurrentPose())) {
             voxel_local_map_->addKeyframe(estimator_->getCurrentPose(), points);
         }

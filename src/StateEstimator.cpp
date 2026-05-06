@@ -11,13 +11,13 @@
 namespace slio {
 
 StateEstimator::StateEstimator()
-    : current_state(), g_initialized(false) {
+    : current_state(), g_initialized(false), max_iteration(5), min_correspondence_threshold(50) {
 }
 
 StateEstimator::~StateEstimator() {
 }
 
-bool StateEstimator::getGravityInit(const std::vector<IMUData> &imu_buffer) {
+bool StateEstimator::getGravityInit(const std::vector<IMUData>& imu_buffer) {
     if (g_initialized)
         return false;
 
@@ -76,7 +76,7 @@ bool StateEstimator::getGravityInit(const std::vector<IMUData> &imu_buffer) {
     return true;
 }
 
-void StateEstimator::propagateIMU(const IMUData &imu_data) {
+void StateEstimator::propagateIMU(const IMUData& imu_data) {
     Eigen::Vector3f omega = imu_data.gyro - current_state.bias_gyro;
     Eigen::Vector3f acc = imu_data.acc - current_state.bias_acc;
     double dt = imu_data.dt;
@@ -101,7 +101,7 @@ void StateEstimator::propagateIMU(const IMUData &imu_data) {
 
 }
 
-void StateEstimator::undistortPointcloud(std::vector<PointCloud> &points) {
+void StateEstimator::undistortPointcloud(std::vector<PointCloud>& points) {
     std::deque<StateWithStamp> tmp_preint_list;
     {
         std::lock_guard<std::mutex> lock(state_estimator_mutex);
@@ -111,7 +111,7 @@ void StateEstimator::undistortPointcloud(std::vector<PointCloud> &points) {
         return value < a.timestamp;
     });
     //spdlog::info("The upperbound tstamp {}, last pointcloud tstamp {}", end_it->timestamp, points.back().timestamp);
-    Sophus::SE3f T_imu_odom = Sophus::SE3f(end_it->rotation, end_it->position).inverse();
+    Sophus::SE3f T_imulastpoint_odom = Sophus::SE3f(end_it->rotation, end_it->position).inverse();
     for (size_t iter = 0; iter < points.size(); iter++) {
         auto it = lower_bound(tmp_preint_list.begin(), tmp_preint_list.end(), points[iter].timestamp, [](const StateWithStamp &a, double value) {
             return a.timestamp < value;
@@ -124,7 +124,7 @@ void StateEstimator::undistortPointcloud(std::vector<PointCloud> &points) {
         Eigen::Vector3f acc_world = R * it->accel + it->gravity;
         Eigen::Vector3f pos = it->position + it->velocity * dt + 0.5 * acc_world * dt * dt;
         Sophus::SE3f T_odom_imu(R, pos);
-        points[iter].xyz = T_imu_odom * T_odom_imu * points[iter].xyz;
+        points[iter].xyz = T_imulastpoint_odom * T_odom_imu * points[iter].xyz;
     }
     {
         std::lock_guard<std::mutex> lock(state_estimator_mutex);
@@ -132,6 +132,54 @@ void StateEstimator::undistortPointcloud(std::vector<PointCloud> &points) {
     }
     tmp_preint_list.clear();
     //spdlog::info("The size of preint queue is {}", preint_list.size());
+}
+
+Eigen::Matrix<double, 1, 18> StateEstimator::computeJacobian(const Eigen::Vector3f& point, const Eigen::Vector3f normal) {
+    Eigen::Matrix<double, 1, 18> H = Eigen::Matrix<double, 1, 18>::Zero();
+    Eigen::Matrix3d point_skew = Sophus::SO3d::hat(point);
+    H.block<1, 3>(0, 0) = -normal.transpose() * current_state.rotation.matrix() * point_skew;
+    H.block<1, 3>(0, 3) = normal.transpose();
+
+    return H;
+}
+
+void StateEstimator::updateState(std::vector<Eigen::Vector3f>& points, const std::shared_ptr<VoxelLocalMap>& voxel_local_map) {
+     
+    for(size_t iter = 0; iter < max_iteration; iter++) {
+        std::vector<Eigen::Vector3f> points_world;
+        for(auto it: points) points_world.push_back(current_state.rotation * it + current_state.position);
+        
+        auto correspondence  = voxel_local_map->findCorrespondence(points_world, 1.0);
+        int correspondence_num = std::count_if(correspondence.begin(), correspondence.end(), [](const auto& x) { return x.found});
+        if(correspondence_num < min_correspondence_threshold) {
+            spdlog::info("Insufficient correspondence {}, skipping update.", correspondence_num);
+            return;
+        }
+
+        Eigen::MatrixXf H(correspondence_num, 18);
+        Eigen::VectorXf r(correspondence_num);
+        Eigen::MatrixXf R_meas = Eigen::MatrixXd::Identity(correspondence_num, correspondence_num) * 0.001;
+        int row = 0;
+        for(size_t i = 0; i < correspondence.size(); i ++) {
+            if(!correspondence[i].found) continue;
+            auto& point = points[i];
+            auto& normal = correspondence[i].normal;
+            auto& centroid = correspondence[i].centroid;
+
+            H.row(row) = computeJacobian(point, normal);
+            r(row) = normal.transpose() * (point - centroid);
+            row++;
+        }
+
+        // Kalman gain
+        Eigen::MatrixXd  S = (H * current_state.covariance * H.transpose() + R_meas);
+        Eigen::MatrixXd  K = current_state.covariance * H.transpose() * S.inverse();
+
+        // State correction
+        Eigen::VectorXd dx = K * r;
+        current_state.rotation = current_state.rotation * Sophus::SO3f(dx.segment<3>(0));
+
+    }
 }
 
 int StateEstimator::getPreintegrationListSize() {

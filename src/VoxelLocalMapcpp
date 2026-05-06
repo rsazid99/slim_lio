@@ -97,26 +97,24 @@ void VoxelLocalMap::addKeyframe(Sophus::SE3f pose, std::vector<PointCloud>& poin
     for (auto it: voxel_map) {
         double inv_n = 1.0 / it.second.count;
         Eigen::Vector3d centroid = it.second.sum * inv_n;
-        local_map.push_back((centroid).cast<float>());
         // Covariance: E[XX^T] - miu*miu^T
         Eigen::Matrix3d cov = it.second.pp_T_sum * inv_n - (centroid * centroid.transpose());
 
         Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eig(cov);
         Eigen::Vector3d eigenvalues = eig.eigenvalues();
         it.second.nomal = eig.eigenvectors().col(0).normalized();
+        it.second.centroid = (centroid).cast<float>();
         // linearity  = (λ2 - λ1) / λ2;
         // planarity  = (λ1 - λ0) / λ2;
         // scattering =  λ0 / λ2;
         it.second.planarity = (eigenvalues(1) - eigenvalues(0)) / (eigenvalues(2) + 1e-6);
         it.second.valid = (it.second.planarity >= min_planarity);
-    }
-
-
-    
+        if(it.second.valid) local_map.push_back(it.second.centroid);
+    }    
 }
 
 std::vector<Correspondence> VoxelLocalMap::findCorrespondence(const std::vector<Eigen::Vector3f>& points, double max_distance) {
-    double max_dist_sq = max_distance * max_distance;
+    double min_dist_sq = max_distance * max_distance;
     std::vector<Correspondence> results;
     
     for(auto p: points) {
@@ -125,22 +123,30 @@ std::vector<Correspondence> VoxelLocalMap::findCorrespondence(const std::vector<
         int iz = static_cast<int>(std::floor(p[2] * inv_voxel_size));
 
         Correspondence best;
-        best.point = Eigen::Vector3f::Zero();
+        best.centroid = Eigen::Vector3f::Zero();
         best.normal = Eigen::Vector3f::Zero();
-        bool found = false;
+        best.found = false;
 
         for(int dx = -2; dx <= 2; dx++) {
             for(int dy = -2; dy <= 2; dy++) {
                 for(int dz = -2; dz <= 2; dz++) {
                     uint64_t key = encodeKey(ix + dx, iy + dy, iz + dz);
-                    auto it = local_map.find(key);
+                    auto it = voxel_map.find(key);
+                    if(it != voxel_map.end() && it->second.valid) {
+                        double dist_square = (p - it->second.centroid).squaredNorm();
+                        if(dist_square < min_dist_sq) {
+                            min_dist_sq = dist_square;
+                            best.centroid = it->second.centroid;
+                            best.normal = it->second.nomal;
+                            best.found = true;
+                        }
+                    }
                 }
             }
         }
+        results.push_back(best);
     }
-
-
-
+    return results;
 }
 
 }
