@@ -13,7 +13,7 @@
 
 namespace slio {
 
-VoxelLocalMap::VoxelLocalMap(double _voxel_size, int _max_voxel, int _min_points, double _min_planarity) {
+VoxelLocalMap::VoxelLocalMap(float _voxel_size, int _max_voxel, int _min_points, float _min_planarity) {
     voxel_size = _voxel_size;
     max_voxel = _max_voxel;
     min_points = _min_points;
@@ -27,6 +27,9 @@ VoxelLocalMap::VoxelLocalMap(double _voxel_size, int _max_voxel, int _min_points
     scan_clouds = boost::circular_buffer<std::vector<Eigen::Vector3f>>(buffer_size);
 }
 
+VoxelLocalMap::~VoxelLocalMap() {
+}
+
 std::vector<Eigen::Vector3f> VoxelLocalMap::filterPointCloud(const std::vector<PointCloud>& points) {
     std::unordered_map<uint64_t, VoxelData> scan_map;
 
@@ -38,12 +41,13 @@ std::vector<Eigen::Vector3f> VoxelLocalMap::filterPointCloud(const std::vector<P
         uint64_t key = encodeKey(ix, iy, iz);
 
         auto& v = scan_map[key];
-        v.sum += p.xyz;
+        v.sum += p.xyz.cast<double>();
         v.count ++;
     }
     std::vector<Eigen::Vector3f> downsampled; 
     for (auto it: scan_map) {
-        downsampled.push_back(it.second.sum / it.second.count);
+        double cnt_inv = 1.0 / it.second.count;
+        downsampled.push_back((it.second.sum * cnt_inv).cast<float>());
     }
 
     return downsampled;
@@ -89,8 +93,8 @@ void VoxelLocalMap::addKeyframe(Sophus::SE3f pose, std::vector<PointCloud>& poin
         uint64_t key = encodeKey(ix, iy, iz);
 
         auto& v = voxel_map[key];
-        v.sum += p;
-        v.pp_T_sum += p * p.transpose();
+        v.sum += p.cast<double>();
+        v.pp_T_sum += p.cast<double>() * p.transpose().cast<double>();
         v.count ++;
     }
     
@@ -101,8 +105,8 @@ void VoxelLocalMap::addKeyframe(Sophus::SE3f pose, std::vector<PointCloud>& poin
         Eigen::Matrix3d cov = it.second.pp_T_sum * inv_n - (centroid * centroid.transpose());
 
         Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eig(cov);
-        Eigen::Vector3d eigenvalues = eig.eigenvalues();
-        it.second.nomal = eig.eigenvectors().col(0).normalized();
+        Eigen::Vector3f eigenvalues = eig.eigenvalues().cast<float>();
+        it.second.nomal = eig.eigenvectors().col(0).normalized().cast<float>();
         it.second.centroid = (centroid).cast<float>();
         // linearity  = (λ2 - λ1) / λ2;
         // planarity  = (λ1 - λ0) / λ2;
@@ -113,8 +117,8 @@ void VoxelLocalMap::addKeyframe(Sophus::SE3f pose, std::vector<PointCloud>& poin
     }    
 }
 
-std::vector<Correspondence> VoxelLocalMap::findCorrespondence(const std::vector<Eigen::Vector3f>& points, double max_distance) {
-    double min_dist_sq = max_distance * max_distance;
+std::vector<Correspondence> VoxelLocalMap::findCorrespondence(const std::vector<Eigen::Vector3f>& points, float max_distance) {
+    float min_dist_sq = max_distance * max_distance;
     std::vector<Correspondence> results;
     
     for(auto p: points) {
@@ -133,7 +137,7 @@ std::vector<Correspondence> VoxelLocalMap::findCorrespondence(const std::vector<
                     uint64_t key = encodeKey(ix + dx, iy + dy, iz + dz);
                     auto it = voxel_map.find(key);
                     if(it != voxel_map.end() && it->second.valid) {
-                        double dist_square = (p - it->second.centroid).squaredNorm();
+                        float dist_square = (p - it->second.centroid).squaredNorm();
                         if(dist_square < min_dist_sq) {
                             min_dist_sq = dist_square;
                             best.centroid = it->second.centroid;

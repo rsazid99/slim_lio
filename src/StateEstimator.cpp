@@ -11,7 +11,7 @@
 namespace slio {
 
 StateEstimator::StateEstimator()
-    : current_state(), g_initialized(false), max_iteration(5), min_correspondence_threshold(50) {
+    : current_state(), g_initialized(false), max_iteration(5), min_correspondence_threshold(50), converge_threshold(0.001) {
 }
 
 StateEstimator::~StateEstimator() {
@@ -54,7 +54,7 @@ bool StateEstimator::getGravityInit(const std::vector<IMUData>& imu_buffer) {
     Eigen::Matrix3f R_align = Eigen::Quaternionf::FromTwoVectors(measured_gravity, up).toRotationMatrix();
     current_state.gravity = -measured_gravity;
 
-    current_state.rotation =  current_state.rotation * Sophus::SO3f(R_align);
+    current_state.rotation =  Sophus::SO3f(R_align) * current_state.rotation;
     current_state.position = R_align * current_state.position;
     current_state.velocity = R_align * current_state.velocity;
     current_state.gravity = R_align * current_state.gravity;
@@ -134,9 +134,9 @@ void StateEstimator::undistortPointcloud(std::vector<PointCloud>& points) {
     //spdlog::info("The size of preint queue is {}", preint_list.size());
 }
 
-Eigen::Matrix<double, 1, 18> StateEstimator::computeJacobian(const Eigen::Vector3f& point, const Eigen::Vector3f normal) {
-    Eigen::Matrix<double, 1, 18> H = Eigen::Matrix<double, 1, 18>::Zero();
-    Eigen::Matrix3d point_skew = Sophus::SO3d::hat(point);
+Eigen::Matrix<float, 1, 18> StateEstimator::computeJacobian(const Eigen::Vector3f& point, const Eigen::Vector3f normal) {
+    Eigen::Matrix<float, 1, 18> H = Eigen::Matrix<float, 1, 18>::Zero();
+    Eigen::Matrix3f point_skew = Sophus::SO3f::hat(point);
     H.block<1, 3>(0, 0) = -normal.transpose() * current_state.rotation.matrix() * point_skew;
     H.block<1, 3>(0, 3) = normal.transpose();
 
@@ -145,12 +145,12 @@ Eigen::Matrix<double, 1, 18> StateEstimator::computeJacobian(const Eigen::Vector
 
 void StateEstimator::updateState(std::vector<Eigen::Vector3f>& points, const std::shared_ptr<VoxelLocalMap>& voxel_local_map) {
      
-    for(size_t iter = 0; iter < max_iteration; iter++) {
+    for(int iter = 0; iter < max_iteration; iter++) {
         std::vector<Eigen::Vector3f> points_world;
         for(auto it: points) points_world.push_back(current_state.rotation * it + current_state.position);
         
         auto correspondence  = voxel_local_map->findCorrespondence(points_world, 1.0);
-        int correspondence_num = std::count_if(correspondence.begin(), correspondence.end(), [](const auto& x) { return x.found});
+        int correspondence_num = std::count_if(correspondence.begin(), correspondence.end(), [](const auto& x) { return x.found;});
         if(correspondence_num < min_correspondence_threshold) {
             spdlog::info("Insufficient correspondence {}, skipping update.", correspondence_num);
             return;
@@ -158,7 +158,7 @@ void StateEstimator::updateState(std::vector<Eigen::Vector3f>& points, const std
 
         Eigen::MatrixXf H(correspondence_num, 18);
         Eigen::VectorXf r(correspondence_num);
-        Eigen::MatrixXf R_meas = Eigen::MatrixXd::Identity(correspondence_num, correspondence_num) * 0.001;
+        Eigen::MatrixXf R_meas = Eigen::MatrixXf::Identity(correspondence_num, correspondence_num) * 0.001;
         int row = 0;
         for(size_t i = 0; i < correspondence.size(); i ++) {
             if(!correspondence[i].found) continue;
@@ -167,18 +167,27 @@ void StateEstimator::updateState(std::vector<Eigen::Vector3f>& points, const std
             auto& centroid = correspondence[i].centroid;
 
             H.row(row) = computeJacobian(point, normal);
-            r(row) = normal.transpose() * (point - centroid);
+            r(row) = -normal.dot(point - centroid);
             row++;
         }
 
         // Kalman gain
-        Eigen::MatrixXd  S = (H * current_state.covariance * H.transpose() + R_meas);
-        Eigen::MatrixXd  K = current_state.covariance * H.transpose() * S.inverse();
+        Eigen::MatrixXf  S = H * current_state.covariance * H.transpose() + R_meas;
+        Eigen::MatrixXf  K = current_state.covariance * H.transpose() * S.inverse();
 
         // State correction
-        Eigen::VectorXd dx = K * r;
-        current_state.rotation = current_state.rotation * Sophus::SO3f(dx.segment<3>(0));
+        Eigen::VectorXf dx = K * r;
+        current_state.rotation = current_state.rotation * Sophus::SO3f::exp(dx.segment<3>(0));
+        current_state.position += dx.segment<3>(3);
+        current_state.velocity += dx.segment<3>(6);
+        current_state.bias_gyro += dx.segment<3>(9);
+        current_state.bias_acc += dx.segment<3>(12);
+        current_state.gravity += dx.segment<3>(15);
 
+        if(dx.norm() < converge_threshold) {
+            current_state.covariance = (Eigen::MatrixXf::Identity(18, 18) - K * H) * current_state.covariance;
+            break;
+        }
     }
 }
 

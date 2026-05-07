@@ -18,20 +18,20 @@ namespace slio {
 
 class VoxelLocalMap{
 public:
-    VoxelLocalMap(double _voxel_size, int _max_voxel, int _min_points, double _min_planarity);
+    VoxelLocalMap(float _voxel_size, int _max_voxel, int _min_points, float _min_planarity);
     ~VoxelLocalMap();
 
     std::vector<Eigen::Vector3f> filterPointCloud(const std::vector<PointCloud>& points);
     bool isKeyframe(Sophus::SE3f pose);
     void addKeyframe(Sophus::SE3f pose, std::vector<PointCloud>& points);
-    std::vector<Correspondence> VoxelLocalMap::findCorrespondence(const std::vector<Eigen::Vector3f>& points, double max_distance);
+    std::vector<Correspondence> findCorrespondence(const std::vector<Eigen::Vector3f>& points, float max_distance);
 
 private:
     static constexpr int OFFSET = 1 << 20;
     uint64_t encodeKey(int x, int y, int z) const {
         return ((uint64_t)(x + OFFSET) << 42) | ((uint64_t)(y + OFFSET) << 21) | ((uint64_t)(z + OFFSET));
     }
-    double voxel_size, inv_voxel_size, min_planarity;
+    float voxel_size, inv_voxel_size, min_planarity;
     size_t max_voxel, min_points;
     Sophus::SE3f last_pose;
     float translation_th, angle_th;

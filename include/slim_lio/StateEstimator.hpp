@@ -30,8 +30,7 @@ class StateEstimator {
     bool getGravityInit(const std::vector<IMUData>& imu_buffer);
     void propagateIMU(const IMUData& imu_data);
     void undistortPointcloud(std::vector<PointCloud>& points);
-    double StateEstimator::computeResidual(const Eigen::Vector3f& point, const Eigen::Vector3f normal);
-    Eigen::Matrix<double, 1, 18> StateEstimator::computeJacobian(const Eigen::Vector3f& point, const Eigen::Vector3f normal);
+    Eigen::Matrix<float, 1, 18> computeJacobian(const Eigen::Vector3f& point, const Eigen::Vector3f normal);
     void updateState(std::vector<Eigen::Vector3f>& points, const std::shared_ptr<VoxelLocalMap>& voxel_local_map);
     int getPreintegrationListSize();
     Sophus::SE3f getCurrentPose();
@@ -40,6 +39,7 @@ class StateEstimator {
     State current_state;
     bool g_initialized;
     int max_iteration, min_correspondence_threshold;
+    float converge_threshold;
     std::mutex state_estimator_mutex;
     std::deque<StateWithStamp> preint_list;
 };

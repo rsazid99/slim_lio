@@ -31,6 +31,7 @@ add_executable(lio_node
 	src/lio_node.cpp
     src/StateEstimator.cpp
     src/utils.cpp
+    src/VoxelLocalMap.cpp
 )
 
 ament_target_dependencies(lio_node
