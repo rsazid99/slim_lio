@@ -24,7 +24,7 @@
 namespace slio {
 class StateEstimator {
   public:
-    StateEstimator();
+    StateEstimator(float gyro_noise_std, float gyro_bias_noise_std, float acc_noise_std, float acc_bias_noise_std, float gravity_noise_std);
     ~StateEstimator();
 
     bool getGravityInit(const std::vector<IMUData>& imu_buffer);
@@ -34,6 +34,7 @@ class StateEstimator {
     void updateState(std::vector<Eigen::Vector3f>& points, const std::shared_ptr<VoxelLocalMap>& voxel_local_map);
     int getPreintegrationListSize();
     Sophus::SE3f getCurrentPose();
+    State getCurrentState();
 
   private:
     State current_state;
@@ -42,6 +43,7 @@ class StateEstimator {
     float converge_threshold;
     std::mutex state_estimator_mutex;
     std::deque<StateWithStamp> preint_list;
+    Eigen::Matrix<float, 18, 18> process_noise;
 };
 
 } // namespace slio

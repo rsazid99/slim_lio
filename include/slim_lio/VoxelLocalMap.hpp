@@ -25,6 +25,7 @@ public:
     bool isKeyframe(Sophus::SE3f pose);
     void addKeyframe(Sophus::SE3f pose, std::vector<PointCloud>& points);
     std::vector<Correspondence> findCorrespondence(const std::vector<Eigen::Vector3f>& points, float max_distance);
+    std::vector<Eigen::Vector3f> getLocalMap();
 
 private:
     static constexpr int OFFSET = 1 << 20;

@@ -40,10 +40,15 @@ public:
         this->declare_parameter<std::vector<double>>("t_il", {
             0.0, 0.0, 0.0
         });
-        this->declare_parameter<int>("voxel_size", 0.20);
+        this->declare_parameter<float>("voxel_size", 0.20);
         this->declare_parameter<int>("voxel_min_points", 3);
         this->declare_parameter<int>("max_voxel_num", 500000);
-        this->declare_parameter<int>("min_planarity", 0.1);
+        this->declare_parameter<float>("min_planarity", 0.1);
+        this->declare_parameter<float>("gyro_noise_std", 0.001);
+        this->declare_parameter<float>("acc_noise_std", 0.001);
+        this->declare_parameter<float>("gyro_bias_noise_std", 0.001);
+        this->declare_parameter<float>("acc_bias_noise_std", 0.001);
+        this->declare_parameter<float>("gravity_noise_std", 0.001);
         
         // Get parameters
         std::string imu_topic_ = this->get_parameter("imu_topic").as_string();
@@ -57,10 +62,15 @@ public:
         auto t_vec = this->get_parameter("t_il").as_double_array();
         Eigen::Vector3f t_il;
         t_il << static_cast<float>(t_vec[0]), static_cast<float>(t_vec[1]), static_cast<float>(t_vec[2]);
-        param_voxel_size = this->get_parameter("voxel_size").as_double();
+        param_voxel_size = static_cast<float>(this->get_parameter("voxel_size").as_double());
         param_voxel_min_points = this->get_parameter("voxel_min_points").as_int();
         param_max_voxel_num = this->get_parameter("max_voxel_num").as_int();
-        param_min_planarity = this->get_parameter("min_planarity").as_double();
+        param_min_planarity = static_cast<float>(this->get_parameter("min_planarity").as_double());
+        param_gyro_noise_std = static_cast<float>(this->get_parameter("gyro_noise_std").as_double());
+        param_gyro_bias_noise_std = static_cast<float>(this->get_parameter("gyro_bias_noise_std").as_double());
+        param_acc_noise_std = static_cast<float>(this->get_parameter("acc_noise_std").as_double());
+        param_acc_bias_noise_std = static_cast<float>(this->get_parameter("acc_bias_noise_std").as_double());
+        param_gravity_noise_std = static_cast<float>(this->get_parameter("gravity_noise_std").as_double());
 
         // Initialize local parameters
         gravity_initialized_ = false;
@@ -81,8 +91,15 @@ public:
             lidar_topic_, 10, [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
                 this->lidarCallback(msg);
             });
+        // Create publisher
+        odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>("/slim_lio/Odometry", 15);
+        pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/slim_lio/pose", 100);
+        map_cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/slim_lio/map", 15);
+        //trajectory_pub_ = this->create_publisher<nav_msgs::msg::Path>("/slim_lio/trajectory", 15);
+
         // create objects
-        estimator_ = std::make_shared<StateEstimator>();
+        estimator_ = std::make_shared<StateEstimator>(param_gyro_noise_std, param_gyro_bias_noise_std, 
+            param_acc_noise_std, param_acc_bias_noise_std, param_gravity_noise_std);
         voxel_local_map_ = std::make_shared<VoxelLocalMap>(param_voxel_size, param_voxel_min_points,
             param_max_voxel_num, param_min_planarity
         );
@@ -138,9 +155,16 @@ private:
         std::vector<Eigen::Vector3f> downsampled_points = voxel_local_map_->filterPointCloud(points);
         estimator_->updateState(downsampled_points, voxel_local_map_);
 
+        // Publish pose and odometry
+        State state = estimator_->getCurrentState();
+        publishPose(state, tstamp, pose_pub_);
+        publishOdometry(state, tstamp, odom_pub_, tf_broadcaster_);
+
         if(voxel_local_map_->isKeyframe(estimator_->getCurrentPose())) {
             voxel_local_map_->addKeyframe(estimator_->getCurrentPose(), points);
         }
+        std::vector<Eigen::Vector3f> local_map_ = voxel_local_map_->getLocalMap();
+        publishLocalMap(local_map_, tstamp, map_cloud_pub_);
         // undistortPointcloud(points, intensity, timestamps);
         RCLCPP_INFO(this->get_logger(), " Size of pointcloud %ld", points.size());
     }
@@ -152,10 +176,8 @@ private:
     // Publisher
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_pub_;
-    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr current_scan_pub_;
-    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr deskewed_scan_pub_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr map_cloud_pub_;
-    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr trajectory_pub_;
+    //rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr trajectory_pub_;
 
     // TF broadcaster
     std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
@@ -165,6 +187,7 @@ private:
     double last_tstamp_;
     double param_voxel_size, param_min_planarity;
     int param_voxel_min_points, param_max_voxel_num;
+    float param_gyro_noise_std, param_gyro_bias_noise_std, param_acc_noise_std, param_acc_bias_noise_std, param_gravity_noise_std;
     std::vector<IMUData> init_imu_buffer_;
     std::shared_ptr<StateEstimator> estimator_;
     std::shared_ptr<VoxelLocalMap> voxel_local_map_;

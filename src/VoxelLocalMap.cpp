@@ -152,5 +152,8 @@ std::vector<Correspondence> VoxelLocalMap::findCorrespondence(const std::vector<
     }
     return results;
 }
+std::vector<Eigen::Vector3f> VoxelLocalMap::getLocalMap() {
+    return local_map;
+}
 
 }

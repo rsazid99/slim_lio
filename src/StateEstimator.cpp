@@ -10,8 +10,15 @@
 #include "slim_lio/StateEstimator.hpp"
 namespace slio {
 
-StateEstimator::StateEstimator()
+StateEstimator::StateEstimator(float gyro_noise_std, float gyro_bias_noise_std, float acc_noise_std, float acc_bias_noise_std, float gravity_noise_std)
     : current_state(), g_initialized(false), max_iteration(5), min_correspondence_threshold(50), converge_threshold(0.001) {
+        process_noise = Eigen::Matrix<float, 18, 18>::Identity();
+        process_noise.block<3, 3>(0,0) *= gyro_noise_std * gyro_noise_std;
+        process_noise.block<3, 3>(3,3) *= acc_noise_std * acc_noise_std;
+        process_noise.block<3, 3>(6,6) *= acc_noise_std * acc_noise_std;
+        process_noise.block<3, 3>(9,9) *= gyro_bias_noise_std * gyro_bias_noise_std;
+        process_noise.block<3, 3>(12,12) *= acc_bias_noise_std * acc_bias_noise_std;
+        process_noise.block<3, 3>(15,15) *= gravity_noise_std * gravity_noise_std;
 }
 
 StateEstimator::~StateEstimator() {
@@ -79,7 +86,7 @@ bool StateEstimator::getGravityInit(const std::vector<IMUData>& imu_buffer) {
 void StateEstimator::propagateIMU(const IMUData& imu_data) {
     Eigen::Vector3f omega = imu_data.gyro - current_state.bias_gyro;
     Eigen::Vector3f acc = imu_data.acc - current_state.bias_acc;
-    double dt = imu_data.dt;
+    float dt = static_cast<float>(imu_data.dt);
 
     Sophus::SO3f dR = Sophus::SO3f::exp(omega * dt);
     Sophus::SO3f R = current_state.rotation * dR;
@@ -93,12 +100,38 @@ void StateEstimator::propagateIMU(const IMUData& imu_data) {
     }
 
     current_state.rotation = R;
-    current_state.position += current_state.velocity * dt + 0.5 * acc_world * dt * dt;
-    current_state.velocity += acc_world * dt;
+    Eigen::Vector3f new_position = current_state.position + current_state.velocity * dt + 0.5 * acc_world * dt * dt;
+    Eigen::Vector3f new_velocity = current_state.velocity + acc_world * dt;
 
-    // To do -- update covariance matrix ---
+    Eigen::Matrix<float, 18, 18> state_transition = Eigen::Matrix<float, 18, 18>::Identity();
+    // Rotation Dynamics
+    Eigen::Matrix3f omega_skew  = Sophus::SO3f::hat(omega);
+    state_transition.block<3, 3>(0, 0) = Eigen::Matrix3f::Identity() - omega_skew * dt;
+    state_transition.block<3, 3>(0, 9) = - Sophus::SO3f::leftJacobian(-omega * dt) * dt; // J_r(phi) = J_l(-phi)
+
+    // Position Dynamics
+    Eigen::Matrix3f acc_skew  = Sophus::SO3f::hat(acc);
+    state_transition.block<3, 3>(3, 0) = -0.5f * R.matrix() * acc_skew * dt * dt;
+    state_transition.block<3, 3>(3, 3) = Sophus::Matrix3f::Identity();
+    state_transition.block<3, 3>(3, 6) = Sophus::Matrix3f::Identity() * dt;
+    state_transition.block<3, 3>(3, 12) = -0.5f * R.matrix() * dt * dt;
+    state_transition.block<3, 3>(3, 15) = 0.5f * Sophus::Matrix3f::Identity() * dt * dt;
+
+    // Velocity Dynamics
+    state_transition.block<3, 3>(6, 0) = - R.matrix() * acc_skew * dt;
+    state_transition.block<3, 3>(6, 6) = Sophus::Matrix3f::Identity();
+    state_transition.block<3, 3>(6, 12) = -R.matrix() * dt;
+    state_transition.block<3, 3>(6, 15) = Sophus::Matrix3f::Identity() * dt;
+
+    Eigen::Matrix<float, 18, 18> P = current_state.covariance;
+    current_state.covariance = state_transition * P * state_transition.transpose() + process_noise * dt;
     //spdlog::info("propagated imu measurement time: {}", imu_data.timestamp);
-
+    {
+        std::lock_guard<std::mutex> lock(state_estimator_mutex);
+        current_state.rotation = R;
+        current_state.position = new_position;
+        current_state.velocity = new_velocity;
+    }
 }
 
 void StateEstimator::undistortPointcloud(std::vector<PointCloud>& points) {
@@ -177,12 +210,15 @@ void StateEstimator::updateState(std::vector<Eigen::Vector3f>& points, const std
 
         // State correction
         Eigen::VectorXf dx = K * r;
-        current_state.rotation = current_state.rotation * Sophus::SO3f::exp(dx.segment<3>(0));
-        current_state.position += dx.segment<3>(3);
-        current_state.velocity += dx.segment<3>(6);
-        current_state.bias_gyro += dx.segment<3>(9);
-        current_state.bias_acc += dx.segment<3>(12);
-        current_state.gravity += dx.segment<3>(15);
+        {
+            std::lock_guard<std::mutex> lock(state_estimator_mutex);
+            current_state.rotation = current_state.rotation * Sophus::SO3f::exp(dx.segment<3>(0));
+            current_state.position += dx.segment<3>(3);
+            current_state.velocity += dx.segment<3>(6);
+            current_state.bias_gyro += dx.segment<3>(9);
+            current_state.bias_acc += dx.segment<3>(12);
+            current_state.gravity += dx.segment<3>(15);
+        }
 
         if(dx.norm() < converge_threshold) {
             current_state.covariance = (Eigen::MatrixXf::Identity(18, 18) - K * H) * current_state.covariance;
@@ -202,6 +238,13 @@ Sophus::SE3f StateEstimator::getCurrentPose() {
     {
         std::lock_guard<std::mutex> lock(state_estimator_mutex);
         return Sophus::SE3f(current_state.rotation, current_state.position);
+    }
+}
+
+State StateEstimator::getCurrentState() {
+    {
+        std::lock_guard<std::mutex> lock(state_estimator_mutex);
+        return current_state;
     }
 }
 

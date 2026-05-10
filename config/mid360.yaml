@@ -17,3 +17,8 @@ lio_node:
       0.0, 0.0, 1.0
     ]
     t_il: [-0.011, -0.02329, 0.04412]
+    gyro_noise_std: 0.1
+    acc_noise_std: 0.01
+    gyro_bias_noise_std: 0.001
+    acc_bias_noise_std: 0.0001
+    gravity_noise_std: 0.001
