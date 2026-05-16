@@ -1,7 +1,7 @@
 #include <slim_lio/utils.hpp>
 namespace slio {
 
-void parsePointcloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg, std::vector<PointCloud> &points) {
+void parsePointcloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg, std::vector<PointCloud>& points) {
 
     sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x");
     sensor_msgs::PointCloud2ConstIterator<float> iter_y(*msg, "y");
@@ -36,7 +36,7 @@ void publishPose(const State& state, double timestamp, const rclcpp::Publisher<g
     pub->publish(pose_msg);
 }
 
-void publishOdometry(const State& state, double timestamp, rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub, 
+void publishOdometry(const State& state, double timestamp, rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub,
     std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broad) {
     rclcpp::Time ros_time(static_cast<int64_t>(timestamp * 1e9));
     Eigen::Quaternionf q(state.rotation.matrix());
@@ -72,7 +72,7 @@ void publishOdometry(const State& state, double timestamp, rclcpp::Publisher<nav
         Eigen::AngleAxisf angle_axis(dR);
         float angle = angle_axis.angle();
         Eigen::Vector3f axis = angle_axis.axis();
-
+        // omega = Rotation_world_imu * rotation_axis * angular_speed
         Eigen::Vector3f omega_world = (prev_rotation * axis) * (angle / dt);
 
         odom_msg.twist.twist.angular.x = omega_world.x();

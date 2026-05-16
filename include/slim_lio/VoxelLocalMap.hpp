@@ -12,9 +12,14 @@
 
 #include <boost/circular_buffer.hpp>
 #include <Eigen/Dense>
+#include <nanoflann.hpp>
 #include <unordered_map>
+#include "spdlog/spdlog.h"
 #include "slim_lio/types.hpp"
 namespace slio {
+
+
+
 
 class VoxelLocalMap{
 public:
@@ -23,7 +28,7 @@ public:
 
     std::vector<Eigen::Vector3f> filterPointCloud(const std::vector<PointCloud>& points);
     bool isKeyframe(Sophus::SE3f pose);
-    void addKeyframe(Sophus::SE3f pose, std::vector<PointCloud>& points);
+    void addKeyframe(Sophus::SE3f pose, std::vector<Eigen::Vector3f>& points);
     std::vector<Correspondence> findCorrespondence(const std::vector<Eigen::Vector3f>& points, float max_distance);
     std::vector<Eigen::Vector3f> getLocalMap();
 
@@ -40,7 +45,9 @@ private:
     boost::circular_buffer<Sophus::SE3f> poses;
     boost::circular_buffer<std::vector<Eigen::Vector3f>> scan_clouds;
     std::unordered_map<uint64_t, VoxelData> voxel_map;
-    std::vector<Eigen::Vector3f> local_map;
+    std::unique_ptr<KDTree> kdtree;
+    KDPointCloud local_map;
+    std::vector<Eigen::Vector3f> local_normals;
 };
 
 }

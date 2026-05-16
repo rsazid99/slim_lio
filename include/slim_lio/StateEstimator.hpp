@@ -14,6 +14,7 @@
 #include "spdlog/spdlog.h"
 #include <Eigen/Dense>
 #include <algorithm>
+#include <chrono>
 #include <deque>
 #include <iostream>
 #include <math.h>
@@ -30,17 +31,16 @@ class StateEstimator {
     bool getGravityInit(const std::vector<IMUData>& imu_buffer);
     void propagateIMU(const IMUData& imu_data);
     void undistortPointcloud(std::vector<PointCloud>& points);
-    Eigen::Matrix<float, 1, 18> computeJacobian(const Eigen::Vector3f& point, const Eigen::Vector3f normal);
-    void updateState(std::vector<Eigen::Vector3f>& points, const std::shared_ptr<VoxelLocalMap>& voxel_local_map);
+    State updateState(std::vector<Eigen::Vector3f>& points, const std::shared_ptr<VoxelLocalMap>& voxel_local_map);
     int getPreintegrationListSize();
     Sophus::SE3f getCurrentPose();
     State getCurrentState();
 
   private:
-    State current_state;
+    State current_state, imu_state;
     bool g_initialized;
     int max_iteration, min_correspondence_threshold;
-    float converge_threshold;
+    float huber_loss_delta, converge_threshold, lidar_noise_std;
     std::mutex state_estimator_mutex;
     std::deque<StateWithStamp> preint_list;
     Eigen::Matrix<float, 18, 18> process_noise;

@@ -40,10 +40,10 @@ public:
         this->declare_parameter<std::vector<double>>("t_il", {
             0.0, 0.0, 0.0
         });
-        this->declare_parameter<float>("voxel_size", 0.20);
+        this->declare_parameter<float>("voxel_size", 0.1);
         this->declare_parameter<int>("voxel_min_points", 3);
         this->declare_parameter<int>("max_voxel_num", 500000);
-        this->declare_parameter<float>("min_planarity", 0.1);
+        this->declare_parameter<float>("min_planarity", 0.2);
         this->declare_parameter<float>("gyro_noise_std", 0.001);
         this->declare_parameter<float>("acc_noise_std", 0.001);
         this->declare_parameter<float>("gyro_bias_noise_std", 0.001);
@@ -88,13 +88,14 @@ public:
                 this->imuCallback(msg);
             });
         lidar_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            lidar_topic_, 10, [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+            lidar_topic_, 20, [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
                 this->lidarCallback(msg);
             });
         // Create publisher
         odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>("/slim_lio/Odometry", 15);
         pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/slim_lio/pose", 100);
         map_cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/slim_lio/map", 15);
+        tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
         //trajectory_pub_ = this->create_publisher<nav_msgs::msg::Path>("/slim_lio/trajectory", 15);
 
         // create objects
@@ -129,7 +130,7 @@ private:
             return;
         }
         estimator_->propagateIMU(*imu_data);
-        RCLCPP_INFO(this->get_logger(), "Successfully propagated IMU.");
+        //RCLCPP_INFO(this->get_logger(), "Successfully propagated IMU.");
     }
 
     void lidarCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
@@ -141,32 +142,39 @@ private:
         std::vector<PointCloud> points;
 
         parsePointcloud(msg, points);
-        RCLCPP_INFO(this->get_logger(), "Successfully parsed LiDAR pointclouds.");
+        //RCLCPP_INFO(this->get_logger(), "Successfully parsed LiDAR pointclouds. %ld", points.size());
         // Transformed lidar pointcloud from lidar to imu frame
         for(auto it: points) {
             it.xyz = T_il_ * it.xyz;
         }
         if(!local_map_initialized_) {
             local_map_initialized_ = true;
-            voxel_local_map_->addKeyframe(estimator_->getCurrentPose(), points);
+             std::vector<Eigen::Vector3f> init_cloud(points.size());
+            for(size_t i = 0; i < points.size(); i ++) {
+                init_cloud[i] = points[i].xyz;
+            }
+            voxel_local_map_->addKeyframe(estimator_->getCurrentPose(), init_cloud);
             return;
         }
         estimator_->undistortPointcloud(points);
         std::vector<Eigen::Vector3f> downsampled_points = voxel_local_map_->filterPointCloud(points);
-        estimator_->updateState(downsampled_points, voxel_local_map_);
-
+        State state = estimator_->updateState(downsampled_points, voxel_local_map_);
         // Publish pose and odometry
-        State state = estimator_->getCurrentState();
+        std::vector<Eigen::Vector3f> aligned_cloud(points.size());
+        for(size_t i = 0; i < points.size(); i ++) {
+            aligned_cloud[i] = state.rotation * points[i].xyz + state.position;
+        }
         publishPose(state, tstamp, pose_pub_);
         publishOdometry(state, tstamp, odom_pub_, tf_broadcaster_);
 
-        if(voxel_local_map_->isKeyframe(estimator_->getCurrentPose())) {
-            voxel_local_map_->addKeyframe(estimator_->getCurrentPose(), points);
+        if(voxel_local_map_->isKeyframe(Sophus::SE3f(state.rotation, state.position))) {
+            voxel_local_map_->addKeyframe(Sophus::SE3f(state.rotation, state.position), aligned_cloud);
+            RCLCPP_INFO(this->get_logger(), "Keyframe added.");
         }
         std::vector<Eigen::Vector3f> local_map_ = voxel_local_map_->getLocalMap();
         publishLocalMap(local_map_, tstamp, map_cloud_pub_);
         // undistortPointcloud(points, intensity, timestamps);
-        RCLCPP_INFO(this->get_logger(), " Size of pointcloud %ld", points.size());
+        //RCLCPP_INFO(this->get_logger(), " Size of pointcloud %ld", points.size());
     }
 
     // Subcriber

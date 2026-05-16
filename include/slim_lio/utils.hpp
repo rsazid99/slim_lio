@@ -25,7 +25,7 @@
 
 namespace slio {
 
-void parsePointcloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg, std::vector<PointCloud> &points);
+void parsePointcloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg, std::vector<PointCloud>& points);
 
 void publishPose(const State& state, double timestamp, const rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pub);
 

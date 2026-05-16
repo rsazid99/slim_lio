@@ -20,9 +20,9 @@ VoxelLocalMap::VoxelLocalMap(float _voxel_size, int _max_voxel, int _min_points,
     min_planarity = _min_planarity;
     inv_voxel_size = 1.0 / voxel_size;
     keyframe_empty = true;
-    translation_th = 3.0f;
-    angle_th = 90.0f * (3.1416f / 180.0f);
-    const int buffer_size = 25;
+    translation_th = 0.5f;
+    angle_th = 10.0f * (3.1416f / 180.0f);
+    const int buffer_size = 50;
     poses = boost::circular_buffer<Sophus::SE3f>(buffer_size);
     scan_clouds = boost::circular_buffer<std::vector<Eigen::Vector3f>>(buffer_size);
 }
@@ -58,13 +58,13 @@ bool VoxelLocalMap::isKeyframe(Sophus::SE3f pose) {
     if(keyframe_empty) return true;
 
     Sophus::SE3f dT = last_pose.inverse() * pose;
-
+    spdlog::info("Calculated displacement {}, angle movement {}", dT.translation().norm(), dT.so3().log().norm());
     if(dT.translation().norm() > translation_th || dT.so3().log().norm() > angle_th) return true;
 
     return false;
 }
 
-void VoxelLocalMap::addKeyframe(Sophus::SE3f pose, std::vector<PointCloud>& points) {
+void VoxelLocalMap::addKeyframe(Sophus::SE3f pose, std::vector<Eigen::Vector3f>& points) {
     if(keyframe_empty) {
         keyframe_empty = false;
     }
@@ -72,15 +72,13 @@ void VoxelLocalMap::addKeyframe(Sophus::SE3f pose, std::vector<PointCloud>& poin
     poses.push_back(pose);
     last_pose = pose;
     voxel_map.clear();
-    local_map.clear();
+    local_map.pts.clear();
+    local_normals.clear();
 
-    std::vector<Eigen::Vector3f> point_vec;
-    for(auto it: points)
-        point_vec.push_back(it.xyz);
+    std::vector<Eigen::Vector3f> all_points;
 
-    scan_clouds.push_back(point_vec);
+    scan_clouds.push_back(points);
 
-    std::vector<Eigen::Vector3f> all_points;    
     for(size_t i = 0; i < scan_clouds.size(); i ++) {
         for(auto it: scan_clouds[i]) all_points.push_back(it);
     }
@@ -97,7 +95,6 @@ void VoxelLocalMap::addKeyframe(Sophus::SE3f pose, std::vector<PointCloud>& poin
         v.pp_T_sum += p.cast<double>() * p.transpose().cast<double>();
         v.count ++;
     }
-    
     for (auto it: voxel_map) {
         double inv_n = 1.0 / it.second.count;
         Eigen::Vector3d centroid = it.second.sum * inv_n;
@@ -105,55 +102,53 @@ void VoxelLocalMap::addKeyframe(Sophus::SE3f pose, std::vector<PointCloud>& poin
         Eigen::Matrix3d cov = it.second.pp_T_sum * inv_n - (centroid * centroid.transpose());
 
         Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eig(cov);
+        int min_idx;
+        float value = eig.eigenvalues().minCoeff(&min_idx);
         Eigen::Vector3f eigenvalues = eig.eigenvalues().cast<float>();
-        it.second.nomal = eig.eigenvectors().col(0).normalized().cast<float>();
+        it.second.nomal = eig.eigenvectors().col(min_idx).normalized().cast<float>();
         it.second.centroid = (centroid).cast<float>();
-        // linearity  = (λ2 - λ1) / λ2;
-        // planarity  = (λ1 - λ0) / λ2;
-        // scattering =  λ0 / λ2;
-        it.second.planarity = (eigenvalues(1) - eigenvalues(0)) / (eigenvalues(2) + 1e-6);
-        it.second.valid = (it.second.planarity >= min_planarity);
-        if(it.second.valid) local_map.push_back(it.second.centroid);
-    }    
+        it.second.planarity = value / (eigenvalues(0) + eigenvalues(1) + eigenvalues(2) + 1e-6);
+        it.second.valid = (it.second.planarity < min_planarity);
+        if(it.second.valid) {
+            local_map.pts.push_back(it.second.centroid);
+            local_normals.push_back(it.second.nomal);
+            //spdlog::info("Point added to keyframe {}, {}, {}", it.second.planarity, min_planarity, it.second.valid);
+        }
+    }
+    kdtree = std::make_unique<KDTree>(3, local_map, nanoflann::KDTreeSingleIndexAdaptorParams(64));
+    kdtree->buildIndex();
+    //spdlog::info("Point added to keyframe.");
 }
 
 std::vector<Correspondence> VoxelLocalMap::findCorrespondence(const std::vector<Eigen::Vector3f>& points, float max_distance) {
     float min_dist_sq = max_distance * max_distance;
     std::vector<Correspondence> results;
-    
-    for(auto p: points) {
-        int ix = static_cast<int>(std::floor(p[0] * inv_voxel_size));
-        int iy = static_cast<int>(std::floor(p[1] * inv_voxel_size));
-        int iz = static_cast<int>(std::floor(p[2] * inv_voxel_size));
+    results.reserve(points.size());
 
-        Correspondence best;
-        best.centroid = Eigen::Vector3f::Zero();
-        best.normal = Eigen::Vector3f::Zero();
-        best.found = false;
+    if(local_map.pts.empty()) return results;
 
-        for(int dx = -2; dx <= 2; dx++) {
-            for(int dy = -2; dy <= 2; dy++) {
-                for(int dz = -2; dz <= 2; dz++) {
-                    uint64_t key = encodeKey(ix + dx, iy + dy, iz + dz);
-                    auto it = voxel_map.find(key);
-                    if(it != voxel_map.end() && it->second.valid) {
-                        float dist_square = (p - it->second.centroid).squaredNorm();
-                        if(dist_square < min_dist_sq) {
-                            min_dist_sq = dist_square;
-                            best.centroid = it->second.centroid;
-                            best.normal = it->second.nomal;
-                            best.found = true;
-                        }
-                    }
-                }
-            }
+    for(size_t i = 0; i < points.size(); i++) {
+        size_t ret_index = 0;
+        float dist_sq = std::numeric_limits<float>::max();
+
+        nanoflann::KNNResultSet<float> resultSet(1);
+        resultSet.init(&ret_index, &dist_sq);
+        const float query_pt[3] = {points[i][0], points[i][1], points[i][2]};
+
+        kdtree->findNeighbors(resultSet, query_pt, nanoflann::SearchParams());
+
+        if(dist_sq < min_dist_sq) {
+            Correspondence best;
+            best.centroid = local_map.pts[ret_index];
+            best.normal = local_normals[ret_index];
+            best.point_idx = i;
+            results.emplace_back(best);
         }
-        results.push_back(best);
     }
     return results;
 }
 std::vector<Eigen::Vector3f> VoxelLocalMap::getLocalMap() {
-    return local_map;
+    return local_map.pts;
 }
 
 }
