@@ -15,6 +15,33 @@ void parsePointcloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg, std::ve
     }
 }
 
+void ParseLivox(const sensor_msgs::msg::PointCloud2::SharedPtr msg, std::vector<PointCloud>& points) {
+    points.reserve(msg->width * msg->height);
+
+    double scan_start_time = rclcpp::Time(msg->header.stamp).seconds();
+
+    sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x");
+    sensor_msgs::PointCloud2ConstIterator<float> iter_y(*msg, "y");
+    sensor_msgs::PointCloud2ConstIterator<float> iter_z(*msg, "z");
+    sensor_msgs::PointCloud2ConstIterator<float> iter_intensity(*msg, "intensity");
+    sensor_msgs::PointCloud2ConstIterator<uint32_t> iter_time(*msg, "offset_time");
+
+    for (; iter_x != iter_x.end();
+         ++iter_x, ++iter_y, ++iter_z, ++iter_intensity, ++iter_time)
+    {
+        double point_time =
+            scan_start_time + static_cast<double>(*iter_time) * 1e-9;
+
+        points.emplace_back(
+            *iter_x,
+            *iter_y,
+            *iter_z,
+            *iter_intensity,
+            point_time
+        );
+    }
+}
+
 void publishPose(const State& state, double timestamp, const rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pub) {
     rclcpp::Time ros_time(static_cast<int64_t>(timestamp * 1e9));
     Eigen::Quaternionf q(state.rotation.matrix());

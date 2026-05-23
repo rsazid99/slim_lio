@@ -40,6 +40,7 @@ public:
         this->declare_parameter<std::vector<double>>("t_il", {
             0.0, 0.0, 0.0
         });
+        this->declare_parameter<float>("acc_scale", 9.8);
         this->declare_parameter<float>("voxel_size", 0.1);
         this->declare_parameter<int>("voxel_min_points", 3);
         this->declare_parameter<int>("max_voxel_num", 500000);
@@ -62,6 +63,7 @@ public:
         auto t_vec = this->get_parameter("t_il").as_double_array();
         Eigen::Vector3f t_il;
         t_il << static_cast<float>(t_vec[0]), static_cast<float>(t_vec[1]), static_cast<float>(t_vec[2]);
+        acc_scale_ = static_cast<float>(this->get_parameter("acc_scale").as_double());
         param_voxel_size = static_cast<float>(this->get_parameter("voxel_size").as_double());
         param_voxel_min_points = this->get_parameter("voxel_min_points").as_int();
         param_max_voxel_num = this->get_parameter("max_voxel_num").as_int();
@@ -94,6 +96,7 @@ public:
         // Create publisher
         odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>("/slim_lio/Odometry", 15);
         pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/slim_lio/pose", 100);
+        aligned_cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/slim_lio/aligned_scan", 15);
         map_cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/slim_lio/map", 15);
         tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
         //trajectory_pub_ = this->create_publisher<nav_msgs::msg::Path>("/slim_lio/trajectory", 15);
@@ -112,7 +115,7 @@ private:
         double imu_dt_ = tstamp - last_tstamp_;
         auto imu_data = std::make_shared<IMUData>(
             imu_dt_, tstamp, Eigen::Vector3f(msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z),
-            Eigen::Vector3f(msg->linear_acceleration.x, msg->linear_acceleration.y, msg->linear_acceleration.z));
+            Eigen::Vector3f(msg->linear_acceleration.x * acc_scale_, msg->linear_acceleration.y * acc_scale_, msg->linear_acceleration.z * acc_scale_));
         last_tstamp_ = tstamp;
         // RCLCPP_INFO(this->get_logger(), "gravity Init %d.", gravity_initialized_);
         if (!gravity_initialized_) {
@@ -134,14 +137,15 @@ private:
     }
 
     void lidarCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+        auto start = std::chrono::steady_clock::now();
         // RCLCPP_INFO(this->get_logger(), "I Found LiDAR Data.");
-        if (!gravity_initialized_ || estimator_->getPreintegrationListSize() < 200)
+        if (!gravity_initialized_ || estimator_->getPreintegrationListSize() < 100)
             return;
 
         double tstamp = msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9;
         std::vector<PointCloud> points;
-
-        parsePointcloud(msg, points);
+        //parsePointcloud(msg, points);
+        ParseLivox(msg, points);
         //RCLCPP_INFO(this->get_logger(), "Successfully parsed LiDAR pointclouds. %ld", points.size());
         // Transformed lidar pointcloud from lidar to imu frame
         for(auto it: points) {
@@ -166,14 +170,16 @@ private:
         }
         publishPose(state, tstamp, pose_pub_);
         publishOdometry(state, tstamp, odom_pub_, tf_broadcaster_);
-
+        
         if(voxel_local_map_->isKeyframe(Sophus::SE3f(state.rotation, state.position))) {
             voxel_local_map_->addKeyframe(Sophus::SE3f(state.rotation, state.position), aligned_cloud);
             RCLCPP_INFO(this->get_logger(), "Keyframe added.");
         }
         std::vector<Eigen::Vector3f> local_map_ = voxel_local_map_->getLocalMap();
         publishLocalMap(local_map_, tstamp, map_cloud_pub_);
-        // undistortPointcloud(points, intensity, timestamps);
+        auto end = std::chrono::steady_clock::now();
+        double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
+        spdlog::info("[LidarCallback] time took {} ms", elapsed_ms);
         //RCLCPP_INFO(this->get_logger(), " Size of pointcloud %ld", points.size());
     }
 
@@ -184,6 +190,7 @@ private:
     // Publisher
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr aligned_cloud_pub_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr map_cloud_pub_;
     //rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr trajectory_pub_;
 
@@ -193,7 +200,7 @@ private:
     std::size_t init_imu_samples_;
     bool gravity_initialized_, local_map_initialized_;
     double last_tstamp_;
-    double param_voxel_size, param_min_planarity;
+    float acc_scale_, param_voxel_size, param_min_planarity;
     int param_voxel_min_points, param_max_voxel_num;
     float param_gyro_noise_std, param_gyro_bias_noise_std, param_acc_noise_std, param_acc_bias_noise_std, param_gravity_noise_std;
     std::vector<IMUData> init_imu_buffer_;

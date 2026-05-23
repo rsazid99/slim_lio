@@ -16,14 +16,25 @@ import os
 def generate_launch_description():
     pkg_name = get_package_share_directory("slim_lio")
     config_file = os.path.join(pkg_name, 'config', 'mid360.yaml')
-    #rviz_config = os.path.join(pkg_name, 'rviz', 'lio.rviz')
+    rviz_config = os.path.join(pkg_name, 'rviz', 'slim.rviz')
+
+    slim_lio = Node(
+        package='slim_lio',
+        executable='lio_node',
+        name='lio_node',
+        output='screen',
+        parameters=[config_file]
+    )
+
+    rviz_node = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        output='screen',
+        arguments=['-d', rviz_config]
+    )
 
     return LaunchDescription([
-        Node(
-            package='slim_lio',
-            executable='lio_node',
-            name='lio_node',
-            output='screen',
-            parameters=[config_file]
-        )
+        slim_lio,
+        rviz_node,
     ])

@@ -9,6 +9,8 @@
 
 lio_node:
   ros__parameters:
+    imu_topic: '/livox/mid360/imu'
+    lidar_topic: '/livox/mid360/lidar'
     init_imu_samples: 100
     #extrinsic parameter from lidar to imu sensor
     R_il: [
@@ -17,6 +19,7 @@ lio_node:
       0.0, 0.0, 1.0
     ]
     t_il: [-0.011, -0.02329, 0.04412]
+    acc_scale: 1.0
     gyro_noise_std: 0.1
     acc_noise_std: 0.01
     gyro_bias_noise_std: 0.001

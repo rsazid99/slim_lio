@@ -142,9 +142,14 @@ void StateEstimator::propagateIMU(const IMUData& imu_data) {
 
 void StateEstimator::undistortPointcloud(std::vector<PointCloud>& points) {
     //auto start = std::chrono::steady_clock::now();
-    std::lock_guard<std::mutex> lock(state_estimator_mutex);
+    // std::lock_guard<std::mutex> lock(state_estimator_mutex);
+    // std::deque<StateWithStamp> tmp_preint_list;
+    // tmp_preint_list = preint_list;
     std::deque<StateWithStamp> tmp_preint_list;
-    tmp_preint_list = preint_list;
+    {
+        std::lock_guard<std::mutex> lock(state_estimator_mutex);
+        tmp_preint_list = preint_list;
+    }
     auto end_it = upper_bound(tmp_preint_list.begin(), tmp_preint_list.end(), points.back().timestamp, [](double value, const StateWithStamp &a) {
         return value < a.timestamp;
     });
@@ -165,7 +170,10 @@ void StateEstimator::undistortPointcloud(std::vector<PointCloud>& points) {
         Sophus::SE3f T_odom_imu(R, pos);
         points[iter].xyz = T_imulastpoint_odom * T_odom_imu * points[iter].xyz;
     }
-    while(!preint_list.empty() && preint_list.front().timestamp < points.front().timestamp) preint_list.pop_front();
+    {
+        std::lock_guard<std::mutex> lock(state_estimator_mutex);
+        while(!preint_list.empty() && preint_list.front().timestamp < points.front().timestamp) preint_list.pop_front();
+    }
     tmp_preint_list.clear();
     // auto end = std::chrono::steady_clock::now();
     // double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
@@ -174,13 +182,14 @@ void StateEstimator::undistortPointcloud(std::vector<PointCloud>& points) {
 }
 
 State StateEstimator::updateState(std::vector<Eigen::Vector3f>& points, const std::shared_ptr<VoxelLocalMap>& voxel_local_map) {
-    std::lock_guard<std::mutex> lock(state_estimator_mutex);
+    //std::lock_guard<std::mutex> lock(state_estimator_mutex);
     auto start = std::chrono::steady_clock::now();
-    State tmp_state =  current_state;
-    // {
-    //     std::lock_guard<std::mutex> lock(state_estimator_mutex);
-    //     tmp_state = current_state;
-    // }
+    // State tmp_state =  current_state;
+    State tmp_state;
+    {
+        std::lock_guard<std::mutex> lock(state_estimator_mutex);
+        tmp_state = current_state;
+    }
     std::vector<Eigen::Vector3f> points_world;
     points_world.reserve(points.size());
 
@@ -215,7 +224,7 @@ State StateEstimator::updateState(std::vector<Eigen::Vector3f>& points, const st
             H.row(i).setZero();
             H.row(i).block<1, 3>(0, 0) = -normal.transpose() * tmp_state.rotation.matrix() * point_skew;
             H.row(i).block<1, 3>(0, 3) = normal.transpose();
-            const float residual = -normal.dot(points_world[correspondence[i].point_idx] - centroid);
+            const float residual = normal.dot(points_world[correspondence[i].point_idx] - centroid);
             residual_vec[i] = residual;
             mean += residual;
             r(i) = residual;
@@ -257,7 +266,7 @@ State StateEstimator::updateState(std::vector<Eigen::Vector3f>& points, const st
         Eigen::Matrix<float, 18, 18> K = information.inverse();
         G.block<18, 9>(0, 0) = K.block<18, 9>(0, 0) * HT_R_inv_H_9;
         // State correction
-        Eigen::VectorXf dx = K.block<18, 9>(0, 0) * HT_R_inv_r;
+        Eigen::VectorXf dx = -K.block<18, 9>(0, 0) * HT_R_inv_r;
         // auto middle_3 = std::chrono::steady_clock::now();
         // double elapsed_ms_m3 = std::chrono::duration<double, std::milli>(middle_3 - start_3).count();
         // spdlog::info("[Estimator] after calculating Kalman gain took {} ms", elapsed_ms_m3);
@@ -267,34 +276,19 @@ State StateEstimator::updateState(std::vector<Eigen::Vector3f>& points, const st
         tmp_state.bias_gyro += dx.segment<3>(9);
         tmp_state.bias_acc += dx.segment<3>(12);
         tmp_state.gravity += dx.segment<3>(15);
-        float rot_norm = dx.segment<3>(0).norm();
-        float pos_norm = dx.segment<3>(3).norm();
-        const float dtheta_norm = dx.segment<3>(0).norm();
-        const float dpos_norm   = dx.segment<3>(3).norm();
-        const float dvel_norm   = dx.segment<3>(6).norm();
-        const float dbg_norm    = dx.segment<3>(9).norm();
-        const float dba_norm    = dx.segment<3>(12).norm();
-        const float dg_norm     = dx.segment<3>(15).norm();
 
-        // spdlog::info(
-        //     "[Estimator] dx parts: rot {}, pos {}, vel {}, bg {}, ba {}, g {}, total {}",
-        //     dtheta_norm,
-        //     dpos_norm,
-        //     dvel_norm,
-        //     dbg_norm,
-        //     dba_norm,
-        //     dg_norm,
-        //     dx.norm()
-        // );
         spdlog::info("Number of Correspondence {}, IEKF update iter {}, dx norm: {}", correspondence_num, iter, dx.norm());
-        //if(rot_norm < converge_threshold && pos_norm < converge_threshold) {
         if(dx.norm() < converge_threshold) {
             Eigen::Matrix<float, 18, 18> I18 = Eigen::Matrix<float, 18, 18>::Identity();
             tmp_state.covariance = (I18 - G) * P_prior;
             break;
         }
     }
-    current_state = tmp_state;
+    //current_state = tmp_state;
+    {
+        std::lock_guard<std::mutex> lock(state_estimator_mutex);
+        current_state = tmp_state;
+    }
     auto end = std::chrono::steady_clock::now();
     double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
     spdlog::info("[Estimator] updating state took {} ms", elapsed_ms);
