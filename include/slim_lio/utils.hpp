@@ -18,23 +18,27 @@
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/imu.hpp>
-#include <sophus/se3.hpp>
-#include <tf2_ros/transform_broadcaster.h>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
+#include <sophus/se3.hpp>
+#include <tf2_ros/transform_broadcaster.h>
 
 namespace slio {
 
-void parsePointcloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg, std::vector<PointCloud>& points);
+void parsePointcloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg, std::vector<PointCloud> &points);
 
-void ParseLivox(const sensor_msgs::msg::PointCloud2::SharedPtr msg, std::vector<PointCloud>& points);
+void ParseLivox(const sensor_msgs::msg::PointCloud2::SharedPtr msg, std::vector<PointCloud> &points);
 
-void publishPose(const State& state, double timestamp, const rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pub);
+void publishPoseWithPath(nav_msgs::msg::Path &path, const State &state, double timestamp,
+						 const rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pub,
+						 const rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub);
 
-void publishOdometry(const State& state, double timestamp, const rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub, 
-    std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broad);
+void publishOdometry(const State &state, double timestamp,
+					 const rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub,
+					 std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broad);
 
-void publishLocalMap(std::vector<Eigen::Vector3f>& lmap, double timestamp, const rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub);
+void publishLocalMap(std::vector<Eigen::Vector3f> &lmap, double timestamp,
+					 const rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub);
 
 } // namespace slio
 #endif // UTILS_H
