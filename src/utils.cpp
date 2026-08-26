@@ -46,7 +46,7 @@ void publishPoseWithPath(nav_msgs::msg::Path &path, const State &state, double t
 						 const rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pub,
 						 const rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub) {
 	rclcpp::Time ros_time(static_cast<int64_t>(timestamp * 1e9));
-	Eigen::Quaternionf q(state.rotation.matrix());
+	Eigen::Quaterniond q(state.rotation.matrix());
 	q.normalize();
 
 	auto pose_msg = geometry_msgs::msg::PoseStamped();
@@ -74,7 +74,7 @@ void publishPoseWithPath(nav_msgs::msg::Path &path, const State &state, double t
 void publishOdometry(const State &state, double timestamp, rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub,
 					 std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broad) {
 	rclcpp::Time ros_time(static_cast<int64_t>(timestamp * 1e9));
-	Eigen::Quaternionf q(state.rotation.matrix());
+	Eigen::Quaterniond q(state.rotation.matrix());
 	q.normalize();
 
 	auto odom_msg = nav_msgs::msg::Odometry();
@@ -97,17 +97,17 @@ void publishOdometry(const State &state, double timestamp, rclcpp::Publisher<nav
 
 	static bool firs_frame = true;
 	static double last_timestep = 0.0;
-	static Eigen::Matrix3f prev_rotation = Eigen::Matrix3f::Identity();
+	static Eigen::Matrix3d prev_rotation = Eigen::Matrix3d::Identity();
 
 	if (!firs_frame) {
 		double dt = timestamp - last_timestep;
 
-		Eigen::Matrix3f dR = prev_rotation.transpose() * state.rotation.matrix();
-		Eigen::AngleAxisf angle_axis(dR);
-		float angle = angle_axis.angle();
-		Eigen::Vector3f axis = angle_axis.axis();
+		Eigen::Matrix3d dR = prev_rotation.transpose() * state.rotation.matrix();
+		Eigen::AngleAxisd angle_axis(dR);
+		double angle = angle_axis.angle();
+		Eigen::Vector3d axis = angle_axis.axis();
 		// omega = Rotation_world_imu * rotation_axis * angular_speed
-		Eigen::Vector3f omega_world = (prev_rotation * axis) * (angle / dt);
+		Eigen::Vector3d omega_world = (prev_rotation * axis) * (angle / dt);
 
 		odom_msg.twist.twist.angular.x = omega_world.x();
 		odom_msg.twist.twist.angular.y = omega_world.y();
@@ -140,7 +140,7 @@ void publishOdometry(const State &state, double timestamp, rclcpp::Publisher<nav
 	tf_broad->sendTransform(transform);
 }
 
-void publishLocalMap(std::vector<Eigen::Vector3f> &lmap, double timestamp,
+void publishLocalMap(std::vector<Eigen::Vector3d> &lmap, double timestamp,
 					 const rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub) {
 	if (lmap.empty())
 		return;

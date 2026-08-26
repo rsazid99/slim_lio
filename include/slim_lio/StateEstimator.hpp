@@ -25,26 +25,26 @@
 namespace slio {
 class StateEstimator {
   public:
-	StateEstimator(float gyro_noise_std, float gyro_bias_noise_std, float acc_noise_std, float acc_bias_noise_std,
-				   float gravity_noise_std);
+	StateEstimator(double gyro_noise_std, double gyro_bias_noise_std, double acc_noise_std, double acc_bias_noise_std,
+				   double gravity_noise_std);
 	~StateEstimator();
 
 	bool getGravityInit(const std::vector<IMUData> &imu_buffer);
 	void propagateIMU(const IMUData &imu_data);
 	void undistortPointcloud(std::vector<PointCloud> &points);
-	State updateState(std::vector<Eigen::Vector3f> &points, const std::shared_ptr<VoxelLocalMap> &voxel_local_map);
+	State updateState(std::vector<Eigen::Vector3d> &points, const std::shared_ptr<VoxelLocalMap> &voxel_local_map);
 	int getPreintegrationListSize();
-	Sophus::SE3f getCurrentPose();
+	Sophus::SE3d getCurrentPose();
 	State getCurrentState();
 
   private:
 	State current_state, imu_state;
 	bool g_initialized;
 	int max_iteration, min_correspondence_threshold;
-	float huber_loss_delta, converge_threshold, lidar_noise_std;
+	double huber_loss_delta, converge_threshold, lidar_noise_std;
 	std::mutex state_estimator_mutex;
 	std::deque<StateWithStamp> preint_list;
-	Eigen::Matrix<float, 18, 18> process_noise;
+	Eigen::Matrix<double, 18, 18> process_noise;
 };
 
 } // namespace slio

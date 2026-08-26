@@ -11,7 +11,7 @@
 
 namespace slio {
 
-VoxelLocalMap::VoxelLocalMap(float _voxel_size, int _max_voxel, int _min_points, float _min_planarity) {
+VoxelLocalMap::VoxelLocalMap(double _voxel_size, int _max_voxel, int _min_points, double _min_planarity) {
 	voxel_size = _voxel_size;
 	max_voxel = _max_voxel;
 	min_points = _min_points;
@@ -22,13 +22,13 @@ VoxelLocalMap::VoxelLocalMap(float _voxel_size, int _max_voxel, int _min_points,
     min_keyframe = 3;
 	angle_th = 30.0f * (3.1416f / 180.0f);
 	const int buffer_size = 20;
-	poses = boost::circular_buffer<Sophus::SE3f>(buffer_size);
-	scan_clouds = boost::circular_buffer<std::vector<Eigen::Vector3f>>(buffer_size);
+	poses = boost::circular_buffer<Sophus::SE3d>(buffer_size);
+	scan_clouds = boost::circular_buffer<std::vector<Eigen::Vector3d>>(buffer_size);
 }
 
 VoxelLocalMap::~VoxelLocalMap() {}
 
-std::vector<Eigen::Vector3f> VoxelLocalMap::filterPointCloud(const std::vector<PointCloud> &points) {
+std::vector<Eigen::Vector3d> VoxelLocalMap::filterPointCloud(const std::vector<PointCloud> &points) {
 	std::unordered_map<uint64_t, VoxelData> scan_map;
 
 	for (auto p : points) {
@@ -42,20 +42,20 @@ std::vector<Eigen::Vector3f> VoxelLocalMap::filterPointCloud(const std::vector<P
 		v.sum += p.xyz.cast<double>();
 		v.count++;
 	}
-	std::vector<Eigen::Vector3f> downsampled;
+	std::vector<Eigen::Vector3d> downsampled;
 	for (auto it : scan_map) {
 		double cnt_inv = 1.0 / it.second.count;
-		downsampled.push_back((it.second.sum * cnt_inv).cast<float>());
+		downsampled.push_back((it.second.sum * cnt_inv).cast<double>());
 	}
 
 	return downsampled;
 }
 
-bool VoxelLocalMap::isKeyframe(Sophus::SE3f pose) {
+bool VoxelLocalMap::isKeyframe(Sophus::SE3d pose) {
 	if (keyframe_empty || scan_clouds.size() < min_keyframe)
 		return true;
 
-	Sophus::SE3f dT = last_pose.inverse() * pose;
+	Sophus::SE3d dT = last_pose.inverse() * pose;
 	spdlog::info("Calculated displacement {}, angle movement {}", dT.translation().norm(), dT.so3().log().norm());
 	if (dT.translation().norm() > translation_th || dT.so3().log().norm() > angle_th)
 		return true;
@@ -63,7 +63,7 @@ bool VoxelLocalMap::isKeyframe(Sophus::SE3f pose) {
 	return false;
 }
 
-void VoxelLocalMap::addKeyframe(Sophus::SE3f pose, std::vector<Eigen::Vector3f> &points) {
+void VoxelLocalMap::addKeyframe(Sophus::SE3d pose, std::vector<Eigen::Vector3d> &points) {
 	if (keyframe_empty) {
 		keyframe_empty = false;
 	}
@@ -74,7 +74,7 @@ void VoxelLocalMap::addKeyframe(Sophus::SE3f pose, std::vector<Eigen::Vector3f> 
 	local_map.pts.clear();
 	local_normals.clear();
 
-	std::vector<Eigen::Vector3f> all_points;
+	std::vector<Eigen::Vector3d> all_points;
     all_points.reserve(500000);
 	scan_clouds.push_back(points);
 
@@ -103,10 +103,10 @@ void VoxelLocalMap::addKeyframe(Sophus::SE3f pose, std::vector<Eigen::Vector3f> 
 
 		Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eig(cov);
 		int min_idx;
-		float value = eig.eigenvalues().minCoeff(&min_idx);
-		Eigen::Vector3f eigenvalues = eig.eigenvalues().cast<float>();
-		it.second.nomal = eig.eigenvectors().col(min_idx).normalized().cast<float>();
-		it.second.centroid = (centroid).cast<float>();
+		double value = eig.eigenvalues().minCoeff(&min_idx);
+		Eigen::Vector3d eigenvalues = eig.eigenvalues().cast<double>();
+		it.second.nomal = eig.eigenvectors().col(min_idx).normalized().cast<double>();
+		it.second.centroid = (centroid).cast<double>();
 		it.second.planarity = value / (eigenvalues(0) + eigenvalues(1) + eigenvalues(2) + 1e-6);
 		it.second.valid = (it.second.planarity < min_planarity);
 		if (it.second.valid) {
@@ -120,9 +120,9 @@ void VoxelLocalMap::addKeyframe(Sophus::SE3f pose, std::vector<Eigen::Vector3f> 
 	// spdlog::info("Point added to keyframe.");
 }
 
-std::vector<Correspondence> VoxelLocalMap::findCorrespondence(const std::vector<Eigen::Vector3f> &points,
-															  float max_distance) {
-	float min_dist_sq = max_distance * max_distance;
+std::vector<Correspondence> VoxelLocalMap::findCorrespondence(const std::vector<Eigen::Vector3d> &points,
+															  double max_distance) {
+	double min_dist_sq = max_distance * max_distance;
 	std::vector<Correspondence> results;
 	results.reserve(points.size());
 
@@ -131,11 +131,11 @@ std::vector<Correspondence> VoxelLocalMap::findCorrespondence(const std::vector<
 
 	for (size_t i = 0; i < points.size(); i++) {
 		size_t ret_index = 0;
-		float dist_sq = std::numeric_limits<float>::max();
+		double dist_sq = std::numeric_limits<double>::max();
 
-		nanoflann::KNNResultSet<float> resultSet(1);
+		nanoflann::KNNResultSet<double> resultSet(1);
 		resultSet.init(&ret_index, &dist_sq);
-		const float query_pt[3] = {points[i][0], points[i][1], points[i][2]};
+		const double query_pt[3] = {points[i][0], points[i][1], points[i][2]};
 
 		kdtree->findNeighbors(resultSet, query_pt, nanoflann::SearchParams());
 
@@ -149,6 +149,6 @@ std::vector<Correspondence> VoxelLocalMap::findCorrespondence(const std::vector<
 	}
 	return results;
 }
-std::vector<Eigen::Vector3f> VoxelLocalMap::getLocalMap() { return local_map.pts; }
+std::vector<Eigen::Vector3d> VoxelLocalMap::getLocalMap() { return local_map.pts; }
 
 } // namespace slio

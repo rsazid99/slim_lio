@@ -20,11 +20,11 @@ namespace slio {
 
 struct IMUData {
 	double dt, timestamp;
-	Eigen::Vector3f gyro, acc;
+	Eigen::Vector3d gyro, acc;
 
-	IMUData() : dt(0), timestamp(0), gyro(Eigen::Vector3f::Zero()), acc(Eigen::Vector3f::Zero()) {}
+	IMUData() : dt(0), timestamp(0), gyro(Eigen::Vector3d::Zero()), acc(Eigen::Vector3d::Zero()) {}
 
-	IMUData(double _dt, double _timestamp, const Eigen::Vector3f _gyro, const Eigen::Vector3f _acc) {
+	IMUData(double _dt, double _timestamp, const Eigen::Vector3d _gyro, const Eigen::Vector3d _acc) {
 		dt = _dt;
 		timestamp = _timestamp;
 		gyro = _gyro;
@@ -33,38 +33,38 @@ struct IMUData {
 };
 
 struct PointCloud {
-	float intensity;
+	double intensity;
 	double timestamp;
-	Eigen::Vector3f xyz;
+	Eigen::Vector3d xyz;
 
-	PointCloud(float _x, float _y, float _z, float _intensity, double _timestamp) {
-		xyz = Eigen::Vector3f(_x, _y, _z);
+	PointCloud(double _x, double _y, double _z, double _intensity, double _timestamp) {
+		xyz = Eigen::Vector3d(_x, _y, _z);
 		intensity = _intensity, timestamp = _timestamp;
 	}
 };
 
 struct State {
-	Eigen::Vector3f position, velocity, bias_gyro, bias_acc, gravity;
-	Sophus::SO3f rotation;
+	Eigen::Vector3d position, velocity, bias_gyro, bias_acc, gravity;
+	Sophus::SO3d rotation;
 
-	Eigen::Matrix<float, 18, 18> covariance;
+	Eigen::Matrix<double, 18, 18> covariance;
 
 	State() {
-		rotation = Sophus::SO3f(Eigen::Matrix3f::Identity());
-		position = velocity = bias_gyro = bias_acc = Eigen::Vector3f::Zero();
-		gravity = Eigen::Vector3f(0, 0, -9.81);
-		covariance = Eigen::Matrix<float, 18, 18>::Identity() * 0.001;
+		rotation = Sophus::SO3d(Eigen::Matrix3d::Identity());
+		position = velocity = bias_gyro = bias_acc = Eigen::Vector3d::Zero();
+		gravity = Eigen::Vector3d(0, 0, -9.81);
+		covariance = Eigen::Matrix<double, 18, 18>::Identity() * 0.001;
 	}
 };
 
 struct StateWithStamp {
-	Eigen::Vector3f position, velocity, gyro, accel, gravity;
-	Sophus::SO3f rotation;
-	Sophus::SE3f pred_pose;
+	Eigen::Vector3d position, velocity, gyro, accel, gravity;
+	Sophus::SO3d rotation;
+	Sophus::SE3d pred_pose;
 	double timestamp;
 
-	StateWithStamp(double _tstamp, Eigen::Vector3f _gyro, Eigen::Vector3f _accel, Sophus::SO3f _rot,
-				   Eigen::Vector3f _pos, Eigen::Vector3f _vel, Eigen::Vector3f _gravity, Sophus::SE3f _pred_pose) {
+	StateWithStamp(double _tstamp, Eigen::Vector3d _gyro, Eigen::Vector3d _accel, Sophus::SO3d _rot,
+				   Eigen::Vector3d _pos, Eigen::Vector3d _vel, Eigen::Vector3d _gravity, Sophus::SE3d _pred_pose) {
 		timestamp = _tstamp;
 		gyro = _gyro;
 		accel = _accel;
@@ -78,28 +78,28 @@ struct StateWithStamp {
 
 struct VoxelData {
 	Eigen::Vector3d sum = Eigen::Vector3d::Zero();
-	Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
+	Eigen::Vector3d centroid = Eigen::Vector3d::Zero();
 	Eigen::Matrix3d pp_T_sum = Eigen::Matrix3d::Zero();
 	int count = 0;
 	bool valid = false;
-	Eigen::Vector3f nomal = Eigen::Vector3f::Zero();
-	float planarity = 0.0;
+	Eigen::Vector3d nomal = Eigen::Vector3d::Zero();
+	double planarity = 0.0;
 };
 struct KDPointCloud {
-	std::vector<Eigen::Vector3f> pts;
+	std::vector<Eigen::Vector3d> pts;
 
 	KDPointCloud() = default;
 
 	inline size_t kdtree_get_point_count() const { return pts.size(); }
 
-	inline float kdtree_get_pt(size_t idx, size_t dim) const { return pts[idx][dim]; }
+	inline double kdtree_get_pt(size_t idx, size_t dim) const { return pts[idx][dim]; }
 
 	template <class BBOX> bool kdtree_get_bbox(BBOX &) const { return false; }
 };
-using KDTree = nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<float, KDPointCloud>, KDPointCloud, 3>;
+using KDTree = nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<double, KDPointCloud>, KDPointCloud, 3>;
 
 struct Correspondence {
-	Eigen::Vector3f centroid, normal;
+	Eigen::Vector3d centroid, normal;
 	int point_idx;
 };
 
