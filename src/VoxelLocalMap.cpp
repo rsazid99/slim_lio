@@ -75,7 +75,7 @@ void VoxelLocalMap::addKeyframe(Sophus::SE3f pose, std::vector<Eigen::Vector3f> 
 	local_normals.clear();
 
 	std::vector<Eigen::Vector3f> all_points;
-
+    all_points.reserve(500000);
 	scan_clouds.push_back(points);
 
 	for (size_t i = 0; i < scan_clouds.size(); i++) {
@@ -95,7 +95,7 @@ void VoxelLocalMap::addKeyframe(Sophus::SE3f pose, std::vector<Eigen::Vector3f> 
 		v.pp_T_sum += p.cast<double>() * p.transpose().cast<double>();
 		v.count++;
 	}
-	for (auto it : voxel_map) {
+	for (auto &it : voxel_map) {
 		double inv_n = 1.0 / it.second.count;
 		Eigen::Vector3d centroid = it.second.sum * inv_n;
 		// Covariance: E[XX^T] - miu*miu^T

@@ -153,9 +153,15 @@ void StateEstimator::undistortPointcloud(std::vector<PointCloud> &points) {
 		std::lock_guard<std::mutex> lock(state_estimator_mutex);
 		tmp_preint_list = preint_list;
 	}
+	if (points.empty() || tmp_preint_list.empty()) {
+		spdlog::warn("[Estimator] skipping undistortion: {} points, {} preintegrated states", points.size(),
+					 tmp_preint_list.size());
+		return;
+	}
 	auto end_it = upper_bound(tmp_preint_list.begin(), tmp_preint_list.end(), points.back().timestamp,
 							  [](double value, const StateWithStamp &a) { return value < a.timestamp; });
-	end_it--;
+	if (end_it != tmp_preint_list.begin())
+		end_it--;
 	// spdlog::info("The upperbound tstamp {}, last pointcloud tstamp {}, {}, {}, {}", end_it->timestamp,
 	// points.back().timestamp, tmp_preint_list.front().timestamp, tmp_preint_list.back().timestamp,
 	// tmp_preint_list.size());
@@ -163,7 +169,8 @@ void StateEstimator::undistortPointcloud(std::vector<PointCloud> &points) {
 	for (size_t iter = 0; iter < points.size(); iter++) {
 		auto it = lower_bound(tmp_preint_list.begin(), tmp_preint_list.end(), points[iter].timestamp,
 							  [](const StateWithStamp &a, double value) { return a.timestamp < value; });
-		it--;
+		if (it != tmp_preint_list.begin())
+			it--;
 		double dt = points[iter].timestamp - it->timestamp;
 		Sophus::SO3f dR = Sophus::SO3f::exp(it->gyro * dt);
 		Sophus::SO3f R = it->rotation * dR;

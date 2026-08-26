@@ -22,6 +22,8 @@ struct IMUData {
 	double dt, timestamp;
 	Eigen::Vector3f gyro, acc;
 
+	IMUData() : dt(0), timestamp(0), gyro(Eigen::Vector3f::Zero()), acc(Eigen::Vector3f::Zero()) {}
+
 	IMUData(double _dt, double _timestamp, const Eigen::Vector3f _gyro, const Eigen::Vector3f _acc) {
 		dt = _dt;
 		timestamp = _timestamp;
@@ -99,6 +101,25 @@ using KDTree = nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<
 struct Correspondence {
 	Eigen::Vector3f centroid, normal;
 	int point_idx;
+};
+
+enum SensorType {
+    IMU,
+    LIDAR
+};
+struct SensorData {
+    SensorType sensor;
+    double timestamp;
+    IMUData imudata;
+    std::vector<PointCloud> lidardata;
+};
+
+struct SensorDataCompare {
+	bool operator()(const SensorData &a, const SensorData &b) const {
+		if (a.timestamp != b.timestamp)
+			return a.timestamp > b.timestamp;      // earliest timestamp first
+		return a.sensor == LIDAR && b.sensor == IMU; // tie-break: IMU before lidar
+	}
 };
 
 } // namespace slio
