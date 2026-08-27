@@ -77,12 +77,12 @@ bool StateEstimator::getGravityInit(const std::vector<IMUData> &imu_buffer) {
 
 	g_initialized = true;
 
-	current_state.covariance.block<3, 3>(0, 0) *= 0.01f;
-	current_state.covariance.block<3, 3>(3, 3) *= 1.0f;
-	current_state.covariance.block<3, 3>(6, 6) *= 0.1f;
+	current_state.covariance.block<3, 3>(0, 0) *= 0.0001f;
+	current_state.covariance.block<3, 3>(3, 3) *= 0.001f;
+	current_state.covariance.block<3, 3>(6, 6) *= 1.0f;
 	current_state.covariance.block<3, 3>(9, 9) *= 0.0001f;
 	current_state.covariance.block<3, 3>(12, 12) *= 0.001f;
-	current_state.covariance.block<3, 3>(15, 15) *= 0.001f;
+	current_state.covariance.block<3, 3>(15, 15) *= 0.0001f;
 	// auto end = std::chrono::steady_clock::now();
 	// double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
 	// spdlog::info("[Estimator] calculating gravity took {} ms", elapsed_ms);
@@ -204,6 +204,11 @@ State StateEstimator::updateState(std::vector<Eigen::Vector3d> &points,
 	}
 	std::vector<Eigen::Vector3d> points_world;
 	points_world.reserve(points.size());
+    State prior = tmp_state;
+    Eigen::Matrix<double, 18, 18> I18 = Eigen::Matrix<double, 18, 18>::Identity();
+    Eigen::Matrix<double, 18, 18> G = Eigen::Matrix<double, 18, 18>::Zero();
+    Eigen::Matrix<double, 18, 18> HT_R_inv_H = Eigen::Matrix<double, 18, 18>::Zero();
+    Eigen::Matrix<double, 18, 18> K = Eigen::Matrix<double, 18, 18>::Zero();
 
 	for (int iter = 0; iter < max_iteration; iter++) {
 		points_world.clear();
@@ -217,13 +222,13 @@ State StateEstimator::updateState(std::vector<Eigen::Vector3d> &points,
 		int correspondence_num = static_cast<int>(correspondence.size());
 		if (correspondence_num < min_correspondence_threshold) {
 			spdlog::info("Insufficient correspondence {}, skipping update.", correspondence_num);
-			return tmp_state;
+			if (iter == 0) return tmp_state;
+            break;
 		}
 		// auto start_2 = std::chrono::steady_clock::now();
 		Eigen::MatrixXd H(correspondence_num, 18);
 		Eigen::VectorXd r(correspondence_num);
 		Eigen::VectorXd R_inv(correspondence_num);
-		Eigen::Matrix<double, 18, 18> G = Eigen::Matrix<double, 18, 18>::Zero();
 		std::vector<double> residual_vec(correspondence_num), huber_weights(correspondence_num);
 		double variance = 0.0;
 		double mean = 0.0;
@@ -272,13 +277,19 @@ State StateEstimator::updateState(std::vector<Eigen::Vector3d> &points,
 		Eigen::Matrix<double, 9, 9> HT_R_inv_H_9 = HT_R_inv * H_9;
 		Eigen::Matrix<double, 9, 1> HT_R_inv_r = HT_R_inv * r;
 		Eigen::Matrix<double, 18, 18> P_prior = tmp_state.covariance;
-		Eigen::Matrix<double, 18, 18> HT_R_inv_H = Eigen::Matrix<double, 18, 18>::Zero();
 		HT_R_inv_H.block<9, 9>(0, 0) = HT_R_inv_H_9;
 		Eigen::Matrix<double, 18, 18> information = HT_R_inv_H + P_prior.inverse();
-		Eigen::Matrix<double, 18, 18> K = information.inverse();
+		K = information.inverse();
+        Eigen::Matrix<double,18,1> dx_prior;           // δx_k = x_k ⊟ x̂
+        dx_prior.segment<3>(0)  = (prior.rotation.inverse() * tmp_state.rotation).log();  // matches R ← R·exp(δ)
+        dx_prior.segment<3>(3)  = tmp_state.position  - prior.position;
+        dx_prior.segment<3>(6)  = tmp_state.velocity  - prior.velocity;
+        dx_prior.segment<3>(9)  = tmp_state.bias_gyro - prior.bias_gyro;
+        dx_prior.segment<3>(12) = tmp_state.bias_acc  - prior.bias_acc;
+        dx_prior.segment<3>(15) = tmp_state.gravity   - prior.gravity;
 		G.block<18, 9>(0, 0) = K.block<18, 9>(0, 0) * HT_R_inv_H_9;
 		// State correction
-		Eigen::VectorXd dx = -K.block<18, 9>(0, 0) * HT_R_inv_r;
+		Eigen::VectorXd dx = -K.block<18, 9>(0, 0) * HT_R_inv_r - (I18 - G) * dx_prior;
 		// auto middle_3 = std::chrono::steady_clock::now();
 		// double elapsed_ms_m3 = std::chrono::duration<double, std::milli>(middle_3 - start_3).count();
 		// spdlog::info("[Estimator] after calculating Kalman gain took {} ms", elapsed_ms_m3);
@@ -291,13 +302,12 @@ State StateEstimator::updateState(std::vector<Eigen::Vector3d> &points,
 
 		spdlog::info("Number of Correspondence {}, IEKF update iter {}, dx norm: {}", correspondence_num, iter,
 					 dx.norm());
-		if (dx.norm() < converge_threshold) {
-			Eigen::Matrix<double, 18, 18> I18 = Eigen::Matrix<double, 18, 18>::Identity();
-			tmp_state.covariance = (I18 - G) * P_prior;
-			break;
-		}
+		if (dx.norm() < converge_threshold) break;
 	}
-	// current_state = tmp_state;
+    // Joseph form for numerical stability
+    Eigen::Matrix<double,18,18> I_KH = I18 - G;
+    Eigen::Matrix<double,18,18> KRKt = K * HT_R_inv_H * K;
+    tmp_state.covariance = I_KH * prior.covariance * I_KH.transpose() + KRKt;
 	{
 		std::lock_guard<std::mutex> lock(state_estimator_mutex);
 		current_state = tmp_state;

@@ -11,10 +11,9 @@
 
 namespace slio {
 
-VoxelLocalMap::VoxelLocalMap(double _voxel_size, int _max_voxel, int _min_points, double _min_planarity) {
+VoxelLocalMap::VoxelLocalMap(double _voxel_size, int _max_voxel, double _min_planarity) {
 	voxel_size = _voxel_size;
 	max_voxel = _max_voxel;
-	min_points = _min_points;
 	min_planarity = _min_planarity;
 	inv_voxel_size = 1.0 / voxel_size;
 	keyframe_empty = true;
@@ -39,13 +38,13 @@ std::vector<Eigen::Vector3d> VoxelLocalMap::filterPointCloud(const std::vector<P
 		uint64_t key = encodeKey(ix, iy, iz);
 
 		auto &v = scan_map[key];
-		v.sum += p.xyz.cast<double>();
+		v.sum += p.xyz;
 		v.count++;
 	}
 	std::vector<Eigen::Vector3d> downsampled;
 	for (auto it : scan_map) {
 		double cnt_inv = 1.0 / it.second.count;
-		downsampled.push_back((it.second.sum * cnt_inv).cast<double>());
+		downsampled.push_back(it.second.sum * cnt_inv);
 	}
 
 	return downsampled;
@@ -91,8 +90,8 @@ void VoxelLocalMap::addKeyframe(Sophus::SE3d pose, std::vector<Eigen::Vector3d> 
 		uint64_t key = encodeKey(ix, iy, iz);
 
 		auto &v = voxel_map[key];
-		v.sum += p.cast<double>();
-		v.pp_T_sum += p.cast<double>() * p.transpose().cast<double>();
+		v.sum += p;
+		v.pp_T_sum += p * p.transpose();
 		v.count++;
 	}
 	for (auto &it : voxel_map) {
@@ -104,9 +103,9 @@ void VoxelLocalMap::addKeyframe(Sophus::SE3d pose, std::vector<Eigen::Vector3d> 
 		Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eig(cov);
 		int min_idx;
 		double value = eig.eigenvalues().minCoeff(&min_idx);
-		Eigen::Vector3d eigenvalues = eig.eigenvalues().cast<double>();
-		it.second.nomal = eig.eigenvectors().col(min_idx).normalized().cast<double>();
-		it.second.centroid = (centroid).cast<double>();
+		Eigen::Vector3d eigenvalues = eig.eigenvalues();
+		it.second.nomal = eig.eigenvectors().col(min_idx).normalized();
+		it.second.centroid = centroid;
 		it.second.planarity = value / (eigenvalues(0) + eigenvalues(1) + eigenvalues(2) + 1e-6);
 		it.second.valid = (it.second.planarity < min_planarity);
 		if (it.second.valid) {

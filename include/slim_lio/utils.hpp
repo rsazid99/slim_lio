@@ -37,7 +37,7 @@ void publishOdometry(const State &state, double timestamp,
 					 const rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub,
 					 std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broad);
 
-void publishLocalMap(std::vector<Eigen::Vector3d> &lmap, double timestamp,
+void publishCloud(std::vector<Eigen::Vector3d> &lmap, double timestamp,
 					 const rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub);
 
 } // namespace slio

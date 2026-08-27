@@ -20,7 +20,7 @@ namespace slio {
 
 class VoxelLocalMap {
   public:
-	VoxelLocalMap(double _voxel_size, int _max_voxel, int _min_points, double _min_planarity);
+	VoxelLocalMap(double _voxel_size, int _max_voxel, double _min_planarity);
 	~VoxelLocalMap();
 
 	std::vector<Eigen::Vector3d> filterPointCloud(const std::vector<PointCloud> &points);
@@ -35,7 +35,7 @@ class VoxelLocalMap {
 		return ((uint64_t)(x + OFFSET) << 42) | ((uint64_t)(y + OFFSET) << 21) | ((uint64_t)(z + OFFSET));
 	}
 	double voxel_size, inv_voxel_size, min_planarity;
-	size_t max_voxel, min_points, min_keyframe;
+	size_t max_voxel, min_keyframe;
 	Sophus::SE3d last_pose;
 	double translation_th, angle_th;
 	bool keyframe_empty;

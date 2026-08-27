@@ -140,28 +140,28 @@ void publishOdometry(const State &state, double timestamp, rclcpp::Publisher<nav
 	tf_broad->sendTransform(transform);
 }
 
-void publishLocalMap(std::vector<Eigen::Vector3d> &lmap, double timestamp,
+void publishCloud(std::vector<Eigen::Vector3d> &cloud, double timestamp,
 					 const rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub) {
-	if (lmap.empty())
+	if (cloud.empty())
 		return;
 	sensor_msgs::msg::PointCloud2 cloud_msg;
 	rclcpp::Time ros_time(static_cast<int64_t>(timestamp * 1e9));
 	cloud_msg.header.stamp = ros_time;
 	cloud_msg.header.frame_id = "map";
 	cloud_msg.height = 1;
-	cloud_msg.width = lmap.size();
+	cloud_msg.width = cloud.size();
 	cloud_msg.is_dense = false;
 	cloud_msg.is_bigendian = false;
 
 	sensor_msgs::PointCloud2Modifier mod(cloud_msg);
 	mod.setPointCloud2FieldsByString(1, "xyz");
-	mod.resize(lmap.size());
+	mod.resize(cloud.size());
 
 	sensor_msgs::PointCloud2Iterator<float> iter_x(cloud_msg, "x");
 	sensor_msgs::PointCloud2Iterator<float> iter_y(cloud_msg, "y");
 	sensor_msgs::PointCloud2Iterator<float> iter_z(cloud_msg, "z");
 
-	for (const auto &point : lmap) {
+	for (const auto &point : cloud) {
 		*iter_x = static_cast<float>(point.x());
 		*iter_y = static_cast<float>(point.y());
 		*iter_z = static_cast<float>(point.z());

@@ -53,7 +53,7 @@ struct State {
 		rotation = Sophus::SO3d(Eigen::Matrix3d::Identity());
 		position = velocity = bias_gyro = bias_acc = Eigen::Vector3d::Zero();
 		gravity = Eigen::Vector3d(0, 0, -9.81);
-		covariance = Eigen::Matrix<double, 18, 18>::Identity() * 0.001;
+		covariance = Eigen::Matrix<double, 18, 18>::Identity();
 	}
 };
 

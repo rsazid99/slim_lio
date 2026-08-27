@@ -7,22 +7,22 @@
  * Copyright ©Sazid Rahman Simanto All rights reserved
  */
 
+#include <condition_variable>
 #include <deque>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <memory>
+#include <mutex>
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
+#include <queue>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <tf2_ros/transform_broadcaster.h>
-#include <vector>
 #include <thread>
-#include <queue>
-#include <mutex>
-#include <condition_variable>
+#include <vector>
 // SLIO Includes
 #include "slim_lio/StateEstimator.hpp"
 #include "slim_lio/VoxelLocalMap.hpp"
@@ -40,7 +40,6 @@ class LioNode : public rclcpp::Node {
 		this->declare_parameter<std::vector<double>>("t_il", {0.0, 0.0, 0.0});
 		this->declare_parameter<double>("acc_scale", 9.8);
 		this->declare_parameter<double>("voxel_size", 0.1);
-		this->declare_parameter<int>("voxel_min_points", 3);
 		this->declare_parameter<int>("max_voxel_num", 500000);
 		this->declare_parameter<double>("min_planarity", 0.2);
 		this->declare_parameter<double>("gyro_noise_std", 0.001);
@@ -55,15 +54,12 @@ class LioNode : public rclcpp::Node {
 		init_imu_samples_ = static_cast<std::size_t>(this->get_parameter("init_imu_samples").as_int());
 		auto R_vec = this->get_parameter("R_il").as_double_array();
 		Eigen::Matrix3d R_il;
-		R_il << R_vec[0], R_vec[1], R_vec[2],
-		        R_vec[3], R_vec[4], R_vec[5],
-			    R_vec[6], R_vec[7], R_vec[8];
+		R_il << R_vec[0], R_vec[1], R_vec[2], R_vec[3], R_vec[4], R_vec[5], R_vec[6], R_vec[7], R_vec[8];
 		auto t_vec = this->get_parameter("t_il").as_double_array();
 		Eigen::Vector3d t_il;
 		t_il << t_vec[0], t_vec[1], t_vec[2];
 		acc_scale_ = this->get_parameter("acc_scale").as_double();
 		param_voxel_size = this->get_parameter("voxel_size").as_double();
-		param_voxel_min_points = this->get_parameter("voxel_min_points").as_int();
 		param_max_voxel_num = this->get_parameter("max_voxel_num").as_int();
 		param_min_planarity = this->get_parameter("min_planarity").as_double();
 		param_gyro_noise_std = this->get_parameter("gyro_noise_std").as_double();
@@ -75,7 +71,7 @@ class LioNode : public rclcpp::Node {
 		// Initialize local parameters
 		gravity_initialized_ = false;
 		local_map_initialized_ = false;
-        running_ = true;
+		running_ = true;
 		last_tstamp_ = 0.0;
 		T_il_ = Sophus::SE3d(R_il, t_il);
 
@@ -100,19 +96,18 @@ class LioNode : public rclcpp::Node {
 		estimator_ =
 			std::make_shared<StateEstimator>(param_gyro_noise_std, param_gyro_bias_noise_std, param_acc_noise_std,
 											 param_acc_bias_noise_std, param_gravity_noise_std);
-		voxel_local_map_ = std::make_shared<VoxelLocalMap>(param_voxel_size, param_voxel_min_points,
-														   param_max_voxel_num, param_min_planarity);
-        data_processing_thread_ = std::thread(&LioNode::processDataLoop, this);
-        //local_map_thread_ = std::thread(&LioNode::localMapPublisherLoop, this);
+		voxel_local_map_ = std::make_shared<VoxelLocalMap>(param_voxel_size, param_max_voxel_num, param_min_planarity);
+		data_processing_thread_ = std::thread(&LioNode::processDataLoop, this);
 	}
-    ~LioNode() {
-        running_ = false;
-        queue_cv_.notify_all();
-        if (data_processing_thread_.joinable()) {
-            data_processing_thread_.join();
-            RCLCPP_INFO(this->get_logger(), "Data processing thread stopped");
-        }
-    }
+	~LioNode() {
+		running_ = false;
+		queue_cv_.notify_all();
+		if (data_processing_thread_.joinable()) {
+			data_processing_thread_.join();
+			RCLCPP_INFO(this->get_logger(), "Data processing thread stopped");
+		}
+	}
+
   private:
 	void imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg) {
 		double tstamp = msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9;
@@ -137,12 +132,12 @@ class LioNode : public rclcpp::Node {
 			}
 			return;
 		}
-        {
-            std::lock_guard<std::mutex> lock(queue_mutex);
-            sensor_data_queue_.push({IMU, tstamp, *imu_data});
-            latest_imu_tstamp_ = tstamp;
-        }
-        queue_cv_.notify_one();
+		{
+			std::lock_guard<std::mutex> lock(queue_mutex);
+			sensor_data_queue_.push({IMU, tstamp, *imu_data, {}});
+			latest_imu_tstamp_ = tstamp;
+		}
+		queue_cv_.notify_one();
 		// RCLCPP_INFO(this->get_logger(), "Successfully propagated IMU.");
 	}
 
@@ -152,82 +147,80 @@ class LioNode : public rclcpp::Node {
 		double tstamp = msg->header.stamp.sec + msg->header.stamp.nanosec * 1e-9;
 		std::vector<PointCloud> points;
 		ParseLivox(msg, points);
-        if (points.empty())
-            return;
-        {
-            std::lock_guard<std::mutex> lock(queue_mutex);
-            sensor_data_queue_.push({LIDAR, tstamp, IMUData(), std::move(points)});
-        }
-        queue_cv_.notify_one();
+		if (points.empty())
+			return;
+		{
+			std::lock_guard<std::mutex> lock(queue_mutex);
+			sensor_data_queue_.push({LIDAR, tstamp, IMUData(), std::move(points)});
+		}
+		queue_cv_.notify_one();
 	}
 
-    void processDataLoop() {
-        while(running_) {
-            SensorData d;
-            {
-                std::unique_lock<std::mutex> lock(queue_mutex);
-                queue_cv_.wait(lock, [this] {
-                    if (!running_)
-                        return true;
-                    if (sensor_data_queue_.empty())
-                        return false;
-                    const SensorData &top = sensor_data_queue_.top();
-                    // Hold a scan back until IMU coverage reaches its last point,
-                    // so propagation always precedes the scan's update.
-                    if (top.sensor == LIDAR)
-                        return latest_imu_tstamp_ >= top.lidardata.back().timestamp;
-                    return true;
-                });
-                if (!running_)
-                    break;
+	void processDataLoop() {
+		while (running_) {
+			SensorData d;
+			{
+				std::unique_lock<std::mutex> lock(queue_mutex);
+				queue_cv_.wait(lock, [this] {
+					if (!running_)
+						return true;
+					if (sensor_data_queue_.empty())
+						return false;
+					const SensorData &top = sensor_data_queue_.top();
+					// Hold a scan back until IMU coverage reaches its last point,
+					// so propagation always precedes the scan's update.
+					if (top.sensor == LIDAR)
+						return latest_imu_tstamp_ >= top.lidardata.back().timestamp;
+					return true;
+				});
+				if (!running_)
+					break;
 
-                d = std::move(const_cast<SensorData &>(sensor_data_queue_.top()));
-                sensor_data_queue_.pop();
-            }
-            
-            if(d.sensor == IMU) {
-                estimator_->propagateIMU(d.imudata);
-            }
-            else if(d.sensor == LIDAR) {
-                auto start = std::chrono::steady_clock::now();
-                for (auto &it : d.lidardata) {
-                    it.xyz = T_il_ * it.xyz;
-                }
-                if (!local_map_initialized_) {
-                    local_map_initialized_ = true;
-                    std::vector<Eigen::Vector3d> init_cloud(d.lidardata.size());
-                    for (size_t i = 0; i < d.lidardata.size(); i++) {
-                        init_cloud[i] = d.lidardata[i].xyz;
-                    }
-                    voxel_local_map_->addKeyframe(estimator_->getCurrentPose(), init_cloud);
-                    continue;
-                }
-                estimator_->undistortPointcloud(d.lidardata);
-                std::vector<Eigen::Vector3d> downsampled_points = voxel_local_map_->filterPointCloud(d.lidardata);
-                State state = estimator_->updateState(downsampled_points, voxel_local_map_);
-                // Publish pose and odometry
-                std::vector<Eigen::Vector3d> aligned_cloud(d.lidardata.size());
-                for (size_t i = 0; i < d.lidardata.size(); i++) {
-                    aligned_cloud[i] = state.rotation * d.lidardata[i].xyz + state.position;
-                }
-                publishPoseWithPath(trajectory_msg_, state, d.timestamp, pose_pub_, trajectory_pub_);
-                publishOdometry(state, d.timestamp, odom_pub_, tf_broadcaster_);
+				d = std::move(const_cast<SensorData &>(sensor_data_queue_.top()));
+				sensor_data_queue_.pop();
+			}
 
-                if (voxel_local_map_->isKeyframe(Sophus::SE3d(state.rotation, state.position))) {
-                    voxel_local_map_->addKeyframe(Sophus::SE3d(state.rotation, state.position), aligned_cloud);
-                    RCLCPP_INFO(this->get_logger(), "Keyframe added.");
-                }
-                std::vector<Eigen::Vector3d> local_map_ = voxel_local_map_->getLocalMap();
-                publishLocalMap(local_map_, d.timestamp, map_cloud_pub_);
-                auto end = std::chrono::steady_clock::now();
-		        double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
-		        spdlog::info("[LidarCallback] time took {} ms", elapsed_ms);
-            }
-        }
-    }
-    // void localMapPublisherLoop() {
+			if (d.sensor == IMU) {
+				estimator_->propagateIMU(d.imudata);
+			} else if (d.sensor == LIDAR) {
+				auto start = std::chrono::steady_clock::now();
+				for (auto &it : d.lidardata) {
+					it.xyz = T_il_ * it.xyz;
+				}
+				if (!local_map_initialized_) {
+					local_map_initialized_ = true;
+					std::vector<Eigen::Vector3d> init_cloud(d.lidardata.size());
+					for (size_t i = 0; i < d.lidardata.size(); i++) {
+						init_cloud[i] = d.lidardata[i].xyz;
+					}
+					voxel_local_map_->addKeyframe(estimator_->getCurrentPose(), init_cloud);
+					continue;
+				}
+				estimator_->undistortPointcloud(d.lidardata);
+				std::vector<Eigen::Vector3d> downsampled_points = voxel_local_map_->filterPointCloud(d.lidardata);
+				State state = estimator_->updateState(downsampled_points, voxel_local_map_);
+				// Publish pose and odometry
+				std::vector<Eigen::Vector3d> aligned_cloud(d.lidardata.size());
+				for (size_t i = 0; i < d.lidardata.size(); i++) {
+					aligned_cloud[i] = state.rotation * d.lidardata[i].xyz + state.position;
+				}
+				publishPoseWithPath(trajectory_msg_, state, d.timestamp, pose_pub_, trajectory_pub_);
+				publishOdometry(state, d.timestamp, odom_pub_, tf_broadcaster_);
 
-    // }
+				if (voxel_local_map_->isKeyframe(Sophus::SE3d(state.rotation, state.position))) {
+					voxel_local_map_->addKeyframe(Sophus::SE3d(state.rotation, state.position), aligned_cloud);
+					RCLCPP_INFO(this->get_logger(), "Keyframe added.");
+				}
+                //std::vector<Eigen::Vector3d> local_map_ = voxel_local_map_->getLocalMap();
+			    //publishLocalMap(local_map_, d.timestamp, map_cloud_pub_);
+                publishCloud(aligned_cloud, d.timestamp, aligned_cloud_pub_);
+				auto end = std::chrono::steady_clock::now();
+				double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
+				spdlog::info("[LidarCallback] time took {} ms", elapsed_ms);
+			}
+		}
+	}
+
 	// Subcriber
 	rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
 	rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_sub_;
@@ -254,13 +247,12 @@ class LioNode : public rclcpp::Node {
 	std::shared_ptr<StateEstimator> estimator_;
 	std::shared_ptr<VoxelLocalMap> voxel_local_map_;
 	Sophus::SE3d T_il_;
-    //std::thread local_map_thread_;
-    std::thread data_processing_thread_;
-    std::mutex queue_mutex;
-    std::condition_variable queue_cv_;
-    double latest_imu_tstamp_ = 0.0;
-    std::atomic<bool> running_;
-    std::priority_queue<SensorData, std::vector<SensorData>, SensorDataCompare> sensor_data_queue_;
+	std::thread data_processing_thread_;
+	std::mutex queue_mutex;
+	std::condition_variable queue_cv_;
+	double latest_imu_tstamp_ = 0.0;
+	std::atomic<bool> running_;
+	std::priority_queue<SensorData, std::vector<SensorData>, SensorDataCompare> sensor_data_queue_;
 };
 
 int main(int argc, char **argv) {
