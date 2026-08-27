@@ -280,8 +280,8 @@ State StateEstimator::updateState(std::vector<Eigen::Vector3d> &points,
 		HT_R_inv_H.block<9, 9>(0, 0) = HT_R_inv_H_9;
 		Eigen::Matrix<double, 18, 18> information = HT_R_inv_H + P_prior.inverse();
 		K = information.inverse();
-        Eigen::Matrix<double,18,1> dx_prior;           // δx_k = x_k ⊟ x̂
-        dx_prior.segment<3>(0)  = (prior.rotation.inverse() * tmp_state.rotation).log();  // matches R ← R·exp(δ)
+        Eigen::Matrix<double,18,1> dx_prior;
+        dx_prior.segment<3>(0)  = (prior.rotation.inverse() * tmp_state.rotation).log();
         dx_prior.segment<3>(3)  = tmp_state.position  - prior.position;
         dx_prior.segment<3>(6)  = tmp_state.velocity  - prior.velocity;
         dx_prior.segment<3>(9)  = tmp_state.bias_gyro - prior.bias_gyro;
