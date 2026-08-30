@@ -60,11 +60,10 @@ struct State {
 struct StateWithStamp {
 	Eigen::Vector3d position, velocity, gyro, accel, gravity;
 	Sophus::SO3d rotation;
-	Sophus::SE3d pred_pose;
 	double timestamp;
 
 	StateWithStamp(double _tstamp, Eigen::Vector3d _gyro, Eigen::Vector3d _accel, Sophus::SO3d _rot,
-				   Eigen::Vector3d _pos, Eigen::Vector3d _vel, Eigen::Vector3d _gravity, Sophus::SE3d _pred_pose) {
+				   Eigen::Vector3d _pos, Eigen::Vector3d _vel, Eigen::Vector3d _gravity) {
 		timestamp = _tstamp;
 		gyro = _gyro;
 		accel = _accel;
@@ -72,7 +71,6 @@ struct StateWithStamp {
 		position = _pos;
 		velocity = _vel;
 		gravity = _gravity;
-		pred_pose = _pred_pose;
 	}
 };
 
@@ -83,20 +81,21 @@ struct VoxelData {
 	int count = 0;
 	bool valid = false;
 	Eigen::Vector3d nomal = Eigen::Vector3d::Zero();
-	double planarity = 0.0;
+    double planarity = 0.0;
 };
-struct KDPointCloud {
-	std::vector<Eigen::Vector3d> pts;
 
-	KDPointCloud() = default;
+// struct KDPointCloud {
+// 	std::vector<Eigen::Vector3d> pts;
 
-	inline size_t kdtree_get_point_count() const { return pts.size(); }
+// 	KDPointCloud() = default;
 
-	inline double kdtree_get_pt(size_t idx, size_t dim) const { return pts[idx][dim]; }
+// 	inline size_t kdtree_get_point_count() const { return pts.size(); }
 
-	template <class BBOX> bool kdtree_get_bbox(BBOX &) const { return false; }
-};
-using KDTree = nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<double, KDPointCloud>, KDPointCloud, 3>;
+// 	inline double kdtree_get_pt(size_t idx, size_t dim) const { return pts[idx][dim]; }
+
+// 	template <class BBOX> bool kdtree_get_bbox(BBOX &) const { return false; }
+// };
+// using KDTree = nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<double, KDPointCloud>, KDPointCloud, 3>;
 
 struct Correspondence {
 	Eigen::Vector3d centroid, normal;

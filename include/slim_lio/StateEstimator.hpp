@@ -25,7 +25,9 @@
 namespace slio {
 class StateEstimator {
   public:
-	StateEstimator(double gyro_noise_std, double gyro_bias_noise_std, double acc_noise_std, double acc_bias_noise_std,
+	StateEstimator(int _max_iteration, int _min_correspondence_threshold, double _huber_loss_delta,
+				   double _converge_threshold, double _lidar_noise_std, double gyro_noise_std,
+				   double gyro_bias_noise_std, double acc_noise_std, double acc_bias_noise_std,
 				   double gravity_noise_std);
 	~StateEstimator();
 
@@ -33,12 +35,9 @@ class StateEstimator {
 	void propagateIMU(const IMUData &imu_data);
 	void undistortPointcloud(std::vector<PointCloud> &points);
 	State updateState(std::vector<Eigen::Vector3d> &points, const std::shared_ptr<VoxelLocalMap> &voxel_local_map);
-	int getPreintegrationListSize();
-	Sophus::SE3d getCurrentPose();
-	State getCurrentState();
 
   private:
-	State current_state, imu_state;
+	State current_state;
 	bool g_initialized;
 	int max_iteration, min_correspondence_threshold;
 	double huber_loss_delta, converge_threshold, lidar_noise_std;

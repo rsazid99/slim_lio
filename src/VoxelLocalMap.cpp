@@ -11,18 +11,11 @@
 
 namespace slio {
 
-VoxelLocalMap::VoxelLocalMap(double _voxel_size, int _max_voxel, double _min_planarity) {
+VoxelLocalMap::VoxelLocalMap(double _voxel_size, int _max_points_per_voxel, double _min_planarity) {
 	voxel_size = _voxel_size;
-	max_voxel = _max_voxel;
+	max_points_per_voxel = _max_points_per_voxel;
 	min_planarity = _min_planarity;
 	inv_voxel_size = 1.0 / voxel_size;
-	keyframe_empty = true;
-	translation_th = 1.0f;
-    min_keyframe = 3;
-	angle_th = 30.0f * (3.1416f / 180.0f);
-	const int buffer_size = 20;
-	poses = boost::circular_buffer<Sophus::SE3d>(buffer_size);
-	scan_clouds = boost::circular_buffer<std::vector<Eigen::Vector3d>>(buffer_size);
 }
 
 VoxelLocalMap::~VoxelLocalMap() {}
@@ -34,13 +27,13 @@ std::vector<Eigen::Vector3d> VoxelLocalMap::filterPointCloud(const std::vector<P
 		int ix = static_cast<int>(std::floor(p.xyz[0] * inv_voxel_size));
 		int iy = static_cast<int>(std::floor(p.xyz[1] * inv_voxel_size));
 		int iz = static_cast<int>(std::floor(p.xyz[2] * inv_voxel_size));
-
 		uint64_t key = encodeKey(ix, iy, iz);
 
 		auto &v = scan_map[key];
 		v.sum += p.xyz;
 		v.count++;
 	}
+
 	std::vector<Eigen::Vector3d> downsampled;
 	for (auto it : scan_map) {
 		double cnt_inv = 1.0 / it.second.count;
@@ -50,104 +43,89 @@ std::vector<Eigen::Vector3d> VoxelLocalMap::filterPointCloud(const std::vector<P
 	return downsampled;
 }
 
-bool VoxelLocalMap::isKeyframe(Sophus::SE3d pose) {
-	if (keyframe_empty || scan_clouds.size() < min_keyframe)
-		return true;
-
-	Sophus::SE3d dT = last_pose.inverse() * pose;
-	spdlog::info("Calculated displacement {}, angle movement {}", dT.translation().norm(), dT.so3().log().norm());
-	if (dT.translation().norm() > translation_th || dT.so3().log().norm() > angle_th)
-		return true;
-
-	return false;
-}
-
-void VoxelLocalMap::addKeyframe(Sophus::SE3d pose, std::vector<Eigen::Vector3d> &points) {
-	if (keyframe_empty) {
-		keyframe_empty = false;
-	}
-
-	poses.push_back(pose);
-	last_pose = pose;
-	voxel_map.clear();
-	local_map.pts.clear();
-	local_normals.clear();
-
-	std::vector<Eigen::Vector3d> all_points;
-    all_points.reserve(500000);
-	scan_clouds.push_back(points);
-
-	for (size_t i = 0; i < scan_clouds.size(); i++) {
-		for (auto it : scan_clouds[i])
-			all_points.push_back(it);
-	}
-
-	for (auto p : all_points) {
-		int ix = static_cast<int>(std::floor(p[0] * inv_voxel_size));
-		int iy = static_cast<int>(std::floor(p[1] * inv_voxel_size));
-		int iz = static_cast<int>(std::floor(p[2] * inv_voxel_size));
-
-		uint64_t key = encodeKey(ix, iy, iz);
-
+void VoxelLocalMap::insert(const std::vector<Eigen::Vector3d> &points) {
+	for (const auto &p : points) {
+		const Eigen::Vector3i c = coordOf(p);
+		uint64_t key = encodeKey(c.x(), c.y(), c.z());
 		auto &v = voxel_map[key];
+
+		if (v.count >= max_points_per_voxel)
+			continue;
+
+		v.count++;
 		v.sum += p;
 		v.pp_T_sum += p * p.transpose();
-		v.count++;
-	}
-	for (auto &it : voxel_map) {
-		double inv_n = 1.0 / it.second.count;
-		Eigen::Vector3d centroid = it.second.sum * inv_n;
-		// Covariance: E[XX^T] - miu*miu^T
-		Eigen::Matrix3d cov = it.second.pp_T_sum * inv_n - (centroid * centroid.transpose());
 
+		if (v.count < 3)
+			continue;
+
+		double inv_n = 1.0 / v.count;
+		v.centroid = v.sum * inv_n;
+		// Covariance: E[XX^T] - miu*miu^T
+		Eigen::Matrix3d cov = v.pp_T_sum * inv_n - (v.centroid * v.centroid.transpose());
 		Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eig(cov);
-		int min_idx;
-		double value = eig.eigenvalues().minCoeff(&min_idx);
-		Eigen::Vector3d eigenvalues = eig.eigenvalues();
-		it.second.nomal = eig.eigenvectors().col(min_idx).normalized();
-		it.second.centroid = centroid;
-		it.second.planarity = value / (eigenvalues(0) + eigenvalues(1) + eigenvalues(2) + 1e-6);
-		it.second.valid = (it.second.planarity < min_planarity);
-		if (it.second.valid) {
-			local_map.pts.push_back(it.second.centroid);
-			local_normals.push_back(it.second.nomal);
-			// spdlog::info("Point added to keyframe {}, {}, {}", it.second.planarity, min_planarity, it.second.valid);
+		if (eig.info() != Eigen::Success) {
+			v.valid = false;
+			continue;
 		}
+
+		Eigen::Vector3d eigenvalues = eig.eigenvalues();
+		v.nomal = eig.eigenvectors().col(0).normalized();
+		v.planarity = eigenvalues(0) / (eigenvalues(0) + eigenvalues(1) + eigenvalues(2) + 1e-6);
+		const double line_ratio = eigenvalues(0) / (eigenvalues(1) + 1e-12);
+		v.valid = (v.planarity < min_planarity) && (line_ratio < 0.5); // sets false for line, edge, and blob
 	}
-	kdtree = std::make_unique<KDTree>(3, local_map, nanoflann::KDTreeSingleIndexAdaptorParams(64));
-	kdtree->buildIndex();
-	// spdlog::info("Point added to keyframe.");
 }
 
 std::vector<Correspondence> VoxelLocalMap::findCorrespondence(const std::vector<Eigen::Vector3d> &points,
 															  double max_distance) {
-	double min_dist_sq = max_distance * max_distance;
 	std::vector<Correspondence> results;
 	results.reserve(points.size());
-
-	if (local_map.pts.empty())
+	if (voxel_map.empty())
 		return results;
 
+	constexpr int SEARCH_NEIGHBOUR = 27;
+
 	for (size_t i = 0; i < points.size(); i++) {
-		size_t ret_index = 0;
-		double dist_sq = std::numeric_limits<double>::max();
+		const Eigen::Vector3d &p = points[i];
+		const Eigen::Vector3i c = coordOf(p);
+		const VoxelData *best = nullptr;
+		double best_dist = max_distance;
 
-		nanoflann::KNNResultSet<double> resultSet(1);
-		resultSet.init(&ret_index, &dist_sq);
-		const double query_pt[3] = {points[i][0], points[i][1], points[i][2]};
+		for (int n = 0; n < SEARCH_NEIGHBOUR; n++) {
+			const uint64_t key = encodeKey(c.x() + NEIGHBOUR_OFFSETS[n][0], c.y() + NEIGHBOUR_OFFSETS[n][1],
+										   c.z() + NEIGHBOUR_OFFSETS[n][2]);
+			auto it = voxel_map.find(key);
+			if (it == voxel_map.end() || !it->second.valid)
+				continue;
 
-		kdtree->findNeighbors(resultSet, query_pt, nanoflann::SearchParams());
+			const VoxelData &v = it->second;
+			const double dist = std::abs(v.nomal.dot(p - v.centroid));
+			if (dist < best_dist) {
+				best_dist = dist;
+				best = &v;
+			}
+			if (n == 0 && best)
+				break;
+		}
 
-		if (dist_sq < min_dist_sq) {
-			Correspondence best;
-			best.centroid = local_map.pts[ret_index];
-			best.normal = local_normals[ret_index];
-			best.point_idx = i;
-			results.emplace_back(best);
+		if (best) {
+			Correspondence corr;
+			corr.centroid = best->centroid;
+			corr.normal = best->nomal;
+			corr.point_idx = static_cast<int>(i);
+			results.emplace_back(corr);
 		}
 	}
 	return results;
 }
-std::vector<Eigen::Vector3d> VoxelLocalMap::getLocalMap() { return local_map.pts; }
+
+void VoxelLocalMap::evict(const Eigen::Vector3d &pos, double radius) {
+	size_t before = voxel_map.size();
+	for (auto it = voxel_map.begin(); it != voxel_map.end();) {
+		it = ((it->second.sum / it->second.count - pos).norm() > radius) ? voxel_map.erase(it) : std::next(it);
+	}
+	spdlog::info("[Map] evict: {} -> {} voxels (radius {} m)", before, voxel_map.size(), radius);
+}
 
 } // namespace slio

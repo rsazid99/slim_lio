@@ -24,27 +24,27 @@ class VoxelLocalMap {
 	~VoxelLocalMap();
 
 	std::vector<Eigen::Vector3d> filterPointCloud(const std::vector<PointCloud> &points);
-	bool isKeyframe(Sophus::SE3d pose);
-	void addKeyframe(Sophus::SE3d pose, std::vector<Eigen::Vector3d> &points);
+	void insert(const std::vector<Eigen::Vector3d> &points);
 	std::vector<Correspondence> findCorrespondence(const std::vector<Eigen::Vector3d> &points, double max_distance);
-	std::vector<Eigen::Vector3d> getLocalMap();
+	void evict(const Eigen::Vector3d &pos, double radius);
 
   private:
 	static constexpr int OFFSET = 1 << 20;
+	static constexpr int NEIGHBOUR_OFFSETS[27][3] = {
+		{0, 0, 0},	 {1, 0, 0},	  {-1, 0, 0}, {0, 1, 0},   {0, -1, 0},	{0, 0, 1},	 {0, 0, -1},
+		{1, 1, 0},	 {1, -1, 0},  {-1, 1, 0}, {-1, -1, 0}, {1, 0, 1},	{1, 0, -1},	 {-1, 0, 1},
+		{-1, 0, -1}, {0, 1, 1},	  {0, 1, -1}, {0, -1, 1},  {0, -1, -1}, {1, 1, 1},	 {1, 1, -1},
+		{1, -1, 1},	 {1, -1, -1}, {-1, 1, 1}, {-1, 1, -1}, {-1, -1, 1}, {-1, -1, -1}};
 	uint64_t encodeKey(int x, int y, int z) const {
 		return ((uint64_t)(x + OFFSET) << 42) | ((uint64_t)(y + OFFSET) << 21) | ((uint64_t)(z + OFFSET));
 	}
-	double voxel_size, inv_voxel_size, min_planarity;
-	size_t max_voxel, min_keyframe;
-	Sophus::SE3d last_pose;
-	double translation_th, angle_th;
-	bool keyframe_empty;
-	boost::circular_buffer<Sophus::SE3d> poses;
-	boost::circular_buffer<std::vector<Eigen::Vector3d>> scan_clouds;
+	Eigen::Vector3i coordOf(const Eigen::Vector3d &p) const {
+		return Eigen::Vector3i(static_cast<int>(std::floor(p[0] * inv_voxel_size)),
+							   static_cast<int>(std::floor(p[1] * inv_voxel_size)),
+							   static_cast<int>(std::floor(p[2] * inv_voxel_size)));
+	}
+	double voxel_size, inv_voxel_size, max_points_per_voxel, min_planarity;
 	std::unordered_map<uint64_t, VoxelData> voxel_map;
-	std::unique_ptr<KDTree> kdtree;
-	KDPointCloud local_map;
-	std::vector<Eigen::Vector3d> local_normals;
 };
 
 } // namespace slio

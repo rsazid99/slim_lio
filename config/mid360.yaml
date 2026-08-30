@@ -19,9 +19,21 @@ lio_node:
       0.0, 0.0, 1.0
     ]
     t_il: [-0.011, -0.02329, 0.04412]
+    
+    #LocalMap
+    voxel_size: 0.5
+    max_points_per_voxel: 30
+    min_planarity: 0.1
+
+    #Estimator:
+    max_iteration: 10
+    min_correspondence_threshold: 20
+    huber_loss_delta: 1.345
+    converge_threshold: 0.01
+    lidar_noise_std: 0.05
     acc_scale: 1.0
     gyro_noise_std: 0.1
     acc_noise_std: 0.01
     gyro_bias_noise_std: 0.001
-    acc_bias_noise_std: 0.0001
-    gravity_noise_std: 0.001
+    acc_bias_noise_std: 0.00001
+    gravity_noise_std: 0.0

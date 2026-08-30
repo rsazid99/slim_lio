@@ -10,10 +10,16 @@
 #include "slim_lio/StateEstimator.hpp"
 namespace slio {
 
-StateEstimator::StateEstimator(double gyro_noise_std, double gyro_bias_noise_std, double acc_noise_std,
-							   double acc_bias_noise_std, double gravity_noise_std)
-	: current_state(), g_initialized(false), max_iteration(10), min_correspondence_threshold(20), huber_loss_delta(0.5),
-	  converge_threshold(0.01), lidar_noise_std(0.05) {
+StateEstimator::StateEstimator(int _max_iteration, int _min_correspondence_threshold, double _huber_loss_delta,
+							   double _converge_threshold, double _lidar_noise_std, double gyro_noise_std,
+							   double gyro_bias_noise_std, double acc_noise_std, double acc_bias_noise_std,
+							   double gravity_noise_std)
+	: current_state(), g_initialized(false) {
+	max_iteration = _max_iteration;
+	min_correspondence_threshold = _min_correspondence_threshold;
+	huber_loss_delta = _huber_loss_delta;
+	converge_threshold = _converge_threshold;
+	lidar_noise_std = _lidar_noise_std;
 	process_noise = Eigen::Matrix<double, 18, 18>::Identity();
 	process_noise.block<3, 3>(0, 0) *= gyro_noise_std * gyro_noise_std;
 	process_noise.block<3, 3>(3, 3) *= acc_noise_std * acc_noise_std;
@@ -26,7 +32,6 @@ StateEstimator::StateEstimator(double gyro_noise_std, double gyro_bias_noise_std
 StateEstimator::~StateEstimator() {}
 
 bool StateEstimator::getGravityInit(const std::vector<IMUData> &imu_buffer) {
-	// auto start = std::chrono::steady_clock::now();
 	std::lock_guard<std::mutex> lock(state_estimator_mutex);
 	if (g_initialized)
 		return false;
@@ -40,7 +45,6 @@ bool StateEstimator::getGravityInit(const std::vector<IMUData> &imu_buffer) {
 	}
 	mean_gyro /= imu_buffer.size();
 	mean_acc /= imu_buffer.size();
-
 	double var_gyro = 0.0, var_acc = 0.0;
 
 	for (const auto &imu : imu_buffer) {
@@ -63,34 +67,29 @@ bool StateEstimator::getGravityInit(const std::vector<IMUData> &imu_buffer) {
 	Eigen::Vector3d measured_gravity = mean_acc.normalized() * 9.81;
 	Eigen::Matrix3d R_align = Eigen::Quaterniond::FromTwoVectors(measured_gravity, up).toRotationMatrix();
 	current_state.gravity = -measured_gravity;
-
 	current_state.rotation = Sophus::SO3d(R_align) * current_state.rotation;
 	current_state.position = R_align * current_state.position;
 	current_state.velocity = R_align * current_state.velocity;
 	current_state.gravity = R_align * current_state.gravity;
-	current_state.bias_gyro = mean_gyro;
+
+	if (var_gyro < 1e-5)
+		current_state.bias_gyro = mean_gyro;
+	else
+		current_state.bias_gyro.setZero();
+
 	current_state.bias_acc = mean_acc - R_align.transpose() * up;
-	// spdlog::info("[StateEstimator] Calculated gravity [{:3f}, {:3f}, {:3f}], accelerometer bias [{:3f}, {:3f},
-	// {:3f}]",
-	//              current_state.gravity.x(), current_state.gravity.y(), current_state.gravity.z(),
-	//              current_state.bias_acc.x(), current_state.bias_acc.y(), current_state.bias_acc.z());
-
 	g_initialized = true;
-
 	current_state.covariance.block<3, 3>(0, 0) *= 0.0001f;
 	current_state.covariance.block<3, 3>(3, 3) *= 0.001f;
 	current_state.covariance.block<3, 3>(6, 6) *= 1.0f;
 	current_state.covariance.block<3, 3>(9, 9) *= 0.0001f;
 	current_state.covariance.block<3, 3>(12, 12) *= 0.001f;
 	current_state.covariance.block<3, 3>(15, 15) *= 0.0001f;
-	// auto end = std::chrono::steady_clock::now();
-	// double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
-	// spdlog::info("[Estimator] calculating gravity took {} ms", elapsed_ms);
+
 	return true;
 }
 
 void StateEstimator::propagateIMU(const IMUData &imu_data) {
-	// auto start = std::chrono::steady_clock::now();
 	std::lock_guard<std::mutex> lock(state_estimator_mutex);
 	Eigen::Vector3d omega = imu_data.gyro - current_state.bias_gyro;
 	Eigen::Vector3d acc = imu_data.acc - current_state.bias_acc;
@@ -103,16 +102,12 @@ void StateEstimator::propagateIMU(const IMUData &imu_data) {
 	Eigen::Vector3d new_position = current_state.position + current_state.velocity * dt + 0.5 * acc_world * dt * dt;
 	Eigen::Vector3d new_velocity = current_state.velocity + acc_world * dt;
 
-	StateWithStamp state_stamp =
-		StateWithStamp(imu_data.timestamp, omega, acc, current_state.rotation, current_state.position,
-					   current_state.velocity, current_state.gravity, Sophus::SE3d(R_new, new_position));
-	preint_list.push_back(state_stamp);
-
 	Eigen::Matrix<double, 18, 18> state_transition = Eigen::Matrix<double, 18, 18>::Identity();
 	// Rotation Dynamics
 	Eigen::Matrix3d omega_skew = Sophus::SO3d::hat(omega);
 	state_transition.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity() - omega_skew * dt;
-	state_transition.block<3, 3>(0, 9) = -Sophus::SO3d::leftJacobian(omega * dt) * dt; // J_r(phi) = J_l(-phi)
+	state_transition.block<3, 3>(0, 9) =
+		-Sophus::SO3d::leftJacobian(-omega * dt) * dt; //  −J_r(ω dt)·dt = −J_l(−ω dt)·dt
 
 	// Position Dynamics
 	Eigen::Matrix3d acc_skew = Sophus::SO3d::hat(acc);
@@ -134,41 +129,38 @@ void StateEstimator::propagateIMU(const IMUData &imu_data) {
 
 	Eigen::Matrix<double, 18, 18> P = current_state.covariance;
 	current_state.covariance = state_transition * P * state_transition.transpose() + process_noise * dt;
-	// spdlog::info("propagated imu measurement time: {}", imu_data.timestamp);
+
 	current_state.rotation = R_new;
 	current_state.position = new_position;
 	current_state.velocity = new_velocity;
-	// auto end = std::chrono::steady_clock::now();
-	// double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
-	// spdlog::info("[Estimator] propagating imu measurement took {} ms", elapsed_ms);
+	StateWithStamp state_stamp = StateWithStamp(imu_data.timestamp, omega, acc, current_state.rotation,
+												current_state.position, current_state.velocity, current_state.gravity);
+	preint_list.push_back(state_stamp);
 }
 
 void StateEstimator::undistortPointcloud(std::vector<PointCloud> &points) {
-	// auto start = std::chrono::steady_clock::now();
-	//  std::lock_guard<std::mutex> lock(state_estimator_mutex);
-	//  std::deque<StateWithStamp> tmp_preint_list;
-	//  tmp_preint_list = preint_list;
 	std::deque<StateWithStamp> tmp_preint_list;
 	{
 		std::lock_guard<std::mutex> lock(state_estimator_mutex);
 		tmp_preint_list = preint_list;
 	}
+
 	if (points.empty() || tmp_preint_list.empty()) {
 		spdlog::warn("[Estimator] skipping undistortion: {} points, {} preintegrated states", points.size(),
 					 tmp_preint_list.size());
 		return;
 	}
+
 	auto end_it = upper_bound(tmp_preint_list.begin(), tmp_preint_list.end(), points.back().timestamp,
 							  [](double value, const StateWithStamp &a) { return value < a.timestamp; });
 	if (end_it != tmp_preint_list.begin())
 		end_it--;
-	// spdlog::info("The upperbound tstamp {}, last pointcloud tstamp {}, {}, {}, {}", end_it->timestamp,
-	// points.back().timestamp, tmp_preint_list.front().timestamp, tmp_preint_list.back().timestamp,
-	// tmp_preint_list.size());
-	Sophus::SE3d T_imulastpoint_odom = end_it->pred_pose.inverse();
+
+	Sophus::SE3d T_imulastpoint_odom = Sophus::SE3d(end_it->rotation, end_it->position).inverse();
+
 	for (size_t iter = 0; iter < points.size(); iter++) {
-		auto it = lower_bound(tmp_preint_list.begin(), tmp_preint_list.end(), points[iter].timestamp,
-							  [](const StateWithStamp &a, double value) { return a.timestamp < value; });
+		auto it = upper_bound(tmp_preint_list.begin(), tmp_preint_list.end(), points[iter].timestamp,
+							  [](double value, const StateWithStamp &a) { return value < a.timestamp; });
 		if (it != tmp_preint_list.begin())
 			it--;
 		double dt = points[iter].timestamp - it->timestamp;
@@ -180,58 +172,52 @@ void StateEstimator::undistortPointcloud(std::vector<PointCloud> &points) {
 		Sophus::SE3d T_odom_imu(R, pos);
 		points[iter].xyz = T_imulastpoint_odom * T_odom_imu * points[iter].xyz;
 	}
+
 	{
 		std::lock_guard<std::mutex> lock(state_estimator_mutex);
 		while (!preint_list.empty() && preint_list.front().timestamp < points.front().timestamp)
 			preint_list.pop_front();
 	}
+
 	tmp_preint_list.clear();
-	// auto end = std::chrono::steady_clock::now();
-	// double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
-	// spdlog::info("[Estimator] undistorting pointcloud took {} ms", elapsed_ms);
-	// spdlog::info("After undistortPointcloud the size of preint queue is {}", preint_list.size());
 }
 
 State StateEstimator::updateState(std::vector<Eigen::Vector3d> &points,
 								  const std::shared_ptr<VoxelLocalMap> &voxel_local_map) {
-	// std::lock_guard<std::mutex> lock(state_estimator_mutex);
 	auto start = std::chrono::steady_clock::now();
-	// State tmp_state =  current_state;
 	State tmp_state;
 	{
 		std::lock_guard<std::mutex> lock(state_estimator_mutex);
 		tmp_state = current_state;
 	}
-	std::vector<Eigen::Vector3d> points_world;
-	points_world.reserve(points.size());
-    State prior = tmp_state;
-    Eigen::Matrix<double, 18, 18> I18 = Eigen::Matrix<double, 18, 18>::Identity();
-    Eigen::Matrix<double, 18, 18> G = Eigen::Matrix<double, 18, 18>::Zero();
-    Eigen::Matrix<double, 18, 18> HT_R_inv_H = Eigen::Matrix<double, 18, 18>::Zero();
-    Eigen::Matrix<double, 18, 18> K = Eigen::Matrix<double, 18, 18>::Zero();
+
+	State prior = tmp_state;
+	Eigen::Matrix<double, 18, 18> I18 = Eigen::Matrix<double, 18, 18>::Identity();
+	Eigen::Matrix<double, 18, 18> G = Eigen::Matrix<double, 18, 18>::Zero();
+	Eigen::Matrix<double, 18, 18> HT_R_inv_H = Eigen::Matrix<double, 18, 18>::Zero();
+	Eigen::Matrix<double, 18, 18> K = Eigen::Matrix<double, 18, 18>::Zero();
 
 	for (int iter = 0; iter < max_iteration; iter++) {
-		points_world.clear();
+		std::vector<Eigen::Vector3d> points_world;
 		for (auto it : points)
 			points_world.push_back(tmp_state.rotation * it + tmp_state.position);
-		// auto start_1 = std::chrono::steady_clock::now();
 		auto correspondence = voxel_local_map->findCorrespondence(points_world, 1.0);
-		// auto middle_1 = std::chrono::steady_clock::now();
-		// double elapsed_ms_m1 = std::chrono::duration<double, std::milli>(middle_1 - start_1).count();
-		// spdlog::info("[Estimator] getting correspondence took {} ms", elapsed_ms_m1);
 		int correspondence_num = static_cast<int>(correspondence.size());
+
 		if (correspondence_num < min_correspondence_threshold) {
 			spdlog::info("Insufficient correspondence {}, skipping update.", correspondence_num);
-			if (iter == 0) return tmp_state;
-            break;
+			if (iter == 0) {
+				for (auto &p : points)
+					p = tmp_state.rotation * p + tmp_state.position;
+				return tmp_state;
+			}
+			break;
 		}
-		// auto start_2 = std::chrono::steady_clock::now();
+
 		Eigen::MatrixXd H(correspondence_num, 18);
 		Eigen::VectorXd r(correspondence_num);
 		Eigen::VectorXd R_inv(correspondence_num);
 		std::vector<double> residual_vec(correspondence_num), huber_weights(correspondence_num);
-		double variance = 0.0;
-		double mean = 0.0;
 
 		for (int i = 0; i < correspondence_num; i++) {
 			auto &point = points[correspondence[i].point_idx];
@@ -244,29 +230,28 @@ State StateEstimator::updateState(std::vector<Eigen::Vector3d> &points,
 			H.row(i).block<1, 3>(0, 3) = normal.transpose();
 			const double residual = normal.dot(points_world[correspondence[i].point_idx] - centroid);
 			residual_vec[i] = residual;
-			mean += residual;
 			r(i) = residual;
 		}
-		mean /= correspondence_num;
+
+		// Robust centre and spread of the residuals: median and MAD.
+		// Outliers can't stretch these the way they stretch mean/std.
+		std::vector<double> tmp(residual_vec);
+		auto mid = tmp.begin() + tmp.size() / 2;
+		std::nth_element(tmp.begin(), mid, tmp.end());
+		const double med = *mid;
+		for (auto &v : tmp)
+			v = std::abs(v - med);
+		std::nth_element(tmp.begin(), mid, tmp.end());
+		const double sigma = std::max(1.4826 * (*mid), 1e-6);
+
+		// Huber weights, measured from the centre so a shared pose offset
+		// (the signal) is not mistaken for outliers.
 		for (int i = 0; i < correspondence_num; i++) {
-			variance += (residual_vec[i] - mean) * (residual_vec[i] - mean);
+			const double residual_abs = std::abs(residual_vec[i] - med) / sigma;
+			huber_weights[i] = (residual_abs > huber_loss_delta) ? huber_loss_delta / residual_abs : 1.0;
+			R_inv(i) = huber_weights[i] / (lidar_noise_std * lidar_noise_std);
 		}
-		variance /= correspondence_num;
-		double std = std::sqrt(variance) / 3.0d;
-		for (int i = 0; i < correspondence_num; i++) {
-			residual_vec[i] /= std::max(std, 1e-6d);
-			double residual_abs = std::abs(residual_vec[i]);
-			if (residual_abs > huber_loss_delta) {
-				huber_weights[i] = huber_loss_delta / residual_abs;
-			} else {
-				huber_weights[i] = 1.0f;
-			}
-			R_inv(i) = huber_weights[i] / ((lidar_noise_std * lidar_noise_std) + 0.001f);
-		}
-		// auto middle_2 = std::chrono::steady_clock::now();
-		// double elapsed_ms_m2 = std::chrono::duration<double, std::milli>(middle_2 - start_2).count();
-		// spdlog::info("[Estimator] before calculating Kalman gain took {} ms", elapsed_ms_m2);
-		// auto start_3 = std::chrono::steady_clock::now();
+
 		Eigen::MatrixXd H_9 = H.block(0, 0, correspondence_num, 9);
 		Eigen::MatrixXd HT_R_inv(9, correspondence_num);
 
@@ -280,19 +265,17 @@ State StateEstimator::updateState(std::vector<Eigen::Vector3d> &points,
 		HT_R_inv_H.block<9, 9>(0, 0) = HT_R_inv_H_9;
 		Eigen::Matrix<double, 18, 18> information = HT_R_inv_H + P_prior.inverse();
 		K = information.inverse();
-        Eigen::Matrix<double,18,1> dx_prior;
-        dx_prior.segment<3>(0)  = (prior.rotation.inverse() * tmp_state.rotation).log();
-        dx_prior.segment<3>(3)  = tmp_state.position  - prior.position;
-        dx_prior.segment<3>(6)  = tmp_state.velocity  - prior.velocity;
-        dx_prior.segment<3>(9)  = tmp_state.bias_gyro - prior.bias_gyro;
-        dx_prior.segment<3>(12) = tmp_state.bias_acc  - prior.bias_acc;
-        dx_prior.segment<3>(15) = tmp_state.gravity   - prior.gravity;
+		Eigen::Matrix<double, 18, 1> dx_prior;
+		dx_prior.segment<3>(0) = (prior.rotation.inverse() * tmp_state.rotation).log();
+		dx_prior.segment<3>(3) = tmp_state.position - prior.position;
+		dx_prior.segment<3>(6) = tmp_state.velocity - prior.velocity;
+		dx_prior.segment<3>(9) = tmp_state.bias_gyro - prior.bias_gyro;
+		dx_prior.segment<3>(12) = tmp_state.bias_acc - prior.bias_acc;
+		dx_prior.segment<3>(15) = tmp_state.gravity - prior.gravity;
 		G.block<18, 9>(0, 0) = K.block<18, 9>(0, 0) * HT_R_inv_H_9;
-		// State correction
 		Eigen::VectorXd dx = -K.block<18, 9>(0, 0) * HT_R_inv_r - (I18 - G) * dx_prior;
-		// auto middle_3 = std::chrono::steady_clock::now();
-		// double elapsed_ms_m3 = std::chrono::duration<double, std::milli>(middle_3 - start_3).count();
-		// spdlog::info("[Estimator] after calculating Kalman gain took {} ms", elapsed_ms_m3);
+
+		// State correction
 		tmp_state.rotation = tmp_state.rotation * Sophus::SO3d::exp(dx.segment<3>(0));
 		tmp_state.position += dx.segment<3>(3);
 		tmp_state.velocity += dx.segment<3>(6);
@@ -302,35 +285,28 @@ State StateEstimator::updateState(std::vector<Eigen::Vector3d> &points,
 
 		spdlog::info("Number of Correspondence {}, IEKF update iter {}, dx norm: {}", correspondence_num, iter,
 					 dx.norm());
-		if (dx.norm() < converge_threshold) break;
+		if (dx.norm() < converge_threshold)
+			break;
 	}
-    // Joseph form for numerical stability
-    Eigen::Matrix<double,18,18> I_KH = I18 - G;
-    Eigen::Matrix<double,18,18> KRKt = K * HT_R_inv_H * K;
-    tmp_state.covariance = I_KH * prior.covariance * I_KH.transpose() + KRKt;
+
+	// Joseph form for numerical stability
+	Eigen::Matrix<double, 18, 18> I_KH = I18 - G;
+	Eigen::Matrix<double, 18, 18> KRKt = K * HT_R_inv_H * K;
+	tmp_state.covariance = I_KH * prior.covariance * I_KH.transpose() + KRKt;
+
 	{
 		std::lock_guard<std::mutex> lock(state_estimator_mutex);
 		current_state = tmp_state;
 	}
+
+	for (auto &p : points)
+		p = tmp_state.rotation * p + tmp_state.position;
+
 	auto end = std::chrono::steady_clock::now();
 	double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
 	spdlog::info("[Estimator] updating state took {} ms", elapsed_ms);
+
 	return tmp_state;
-}
-
-int StateEstimator::getPreintegrationListSize() {
-	std::lock_guard<std::mutex> lock(state_estimator_mutex);
-	return preint_list.size();
-}
-
-Sophus::SE3d StateEstimator::getCurrentPose() {
-	std::lock_guard<std::mutex> lock(state_estimator_mutex);
-	return Sophus::SE3d(current_state.rotation, current_state.position);
-}
-
-State StateEstimator::getCurrentState() {
-	std::lock_guard<std::mutex> lock(state_estimator_mutex);
-	return current_state;
 }
 
 } // namespace slio
