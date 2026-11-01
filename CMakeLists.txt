@@ -17,6 +17,9 @@ find_package(Eigen3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(Sophus REQUIRED)
+find_package(message_filters REQUIRED)
+find_package(std_srvs REQUIRED)
+find_package(GTSAM REQUIRED)
 
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -27,28 +30,25 @@ include_directories(
 	${EIGEN3_INCLUDE_DIR}
 )
 
-add_executable(lio_node
-	src/lio_node.cpp
+add_library(slim_lio_core
     src/StateEstimator.cpp
     src/utils.cpp
     src/VoxelLocalMap.cpp
 )
 
-ament_target_dependencies(lio_node
-	rclcpp
-	sensor_msgs
-	nav_msgs
-	geometry_msgs
-	tf2
-	tf2_ros
-)
+ament_target_dependencies(slim_lio_core rclcpp sensor_msgs nav_msgs geometry_msgs tf2 tf2_ros)
+target_link_libraries(slim_lio_core yaml-cpp spdlog::spdlog)
 
-target_link_libraries(lio_node
-	yaml-cpp
-    spdlog::spdlog
-)
+add_executable(lio_node src/lio_node.cpp)
+ament_target_dependencies(lio_node rclcpp sensor_msgs nav_msgs geometry_msgs tf2 tf2_ros)
+target_link_libraries(lio_node slim_lio_core)
 
-install(TARGETS lio_node DESTINATION lib/${PROJECT_NAME})
+add_executable(slam_node src/slam_node.cpp)
+ament_target_dependencies(slam_node rclcpp sensor_msgs nav_msgs geometry_msgs tf2 tf2_ros message_filters std_srvs)
+target_link_libraries(slam_node slim_lio_core gtsam)
+
+
+install(TARGETS lio_node slam_node DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY launch config rviz DESTINATION share/${PROJECT_NAME})
 
 

@@ -1,40 +1,47 @@
 """
  * @file            launch/lio.launch.py
- * @description     
+ * @description     odometry only: lio_node (+ RViz in the odom frame)
  * @author          rsazid99 <rsazid99@gmail.com>
- * @createTime      2026-04-23 01:18:21
- * @lastModified    2026-04-23 03:30:30
- * Copyright ©Sazid Rahman Simanto All rights reserved
+ * @createTime      2026-04-23 03:41:43
+ * @lastModified    2026-11-01 00:00:00
+ * Copyright (c) 2026 Sazid Rahman Simanto
+ * SPDX-License-Identifier: MIT
 """
 
-from launch import LaunchDescription
-from launch_ros.actions import Node
-from launch.substitutions import LaunchConfiguration
-from ament_index_python.packages import get_package_share_directory
 import os
 
-def generate_launch_description():
-    pkg_name = get_package_share_directory("slim_lio")
-    config_file = os.path.join(pkg_name, 'config', 'mid360.yaml')
-    rviz_config = os.path.join(pkg_name, 'rviz', 'slim.rviz')
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
 
-    slim_lio = Node(
+
+def generate_launch_description():
+    share = get_package_share_directory('slim_lio')
+
+    config_arg = DeclareLaunchArgument(
+        'config',
+        default_value=os.path.join(share, 'config', 'colosseo.yaml'),
+        description='lio_node parameter file')
+    rviz_arg = DeclareLaunchArgument(
+        'rviz', default_value='true',
+        description='start RViz with rviz/lio.rviz (fixed frame odom)')
+
+    lio_node = Node(
         package='slim_lio',
         executable='lio_node',
         name='lio_node',
         output='screen',
-        parameters=[config_file]
-    )
+        parameters=[LaunchConfiguration('config')])
 
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
         name='rviz2',
         output='screen',
-        arguments=['-d', rviz_config]
-    )
+        arguments=['-d', os.path.join(share, 'rviz', 'lio.rviz')],
+        condition=IfCondition(LaunchConfiguration('rviz')))
 
-    return LaunchDescription([
-        slim_lio,
-        rviz_node,
-    ])
+    return LaunchDescription([config_arg, rviz_arg, lio_node, rviz_node])

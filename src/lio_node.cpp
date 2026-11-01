@@ -1,11 +1,12 @@
 /*
  * @file            src/lio_node.cpp
- * @description
+ * @description     
  * @author          rsazid99 <rsazid99@gmail.com>
  * @createTime      2026-04-22 19:43:25
- * @lastModified    2026-04-23 02:23:29
- * Copyright ©Sazid Rahman Simanto All rights reserved
- */
+ * @lastModified    2026-11-01 19:58:20
+ * Copyright (c) 2026 Sazid Rahman Simanto
+ * SPDX-License-Identifier: MIT
+*/
 
 #include <condition_variable>
 #include <deque>
@@ -35,10 +36,15 @@ class LioNode : public rclcpp::Node {
 		// Declare parameters
 		this->declare_parameter<std::string>("imu_topic", "/livox/imu");
 		this->declare_parameter<std::string>("lidar_topic", "/livox/lidar");
+		lidar_type_ = this->declare_parameter<std::string>("lidar_type", "livox"); // "livox" | "ouster"
 		this->declare_parameter<int>("init_imu_samples", 200);
 		this->declare_parameter<std::vector<double>>("R_il", {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0});
 		this->declare_parameter<std::vector<double>>("t_il", {0.0, 0.0, 0.0});
 		acc_scale_ = this->declare_parameter<double>("acc_scale", 9.8);
+		// true: publish each scan's pose at the scan MIDDLE, stamped with the scan header (the
+		// convention of the VBR ground truth and of KISS-ICP / PIN-SLAM). false: publish the IEKF
+		// state at its own instant (last IMU sample <= scan end), stamped with that time.
+		publish_mid_scan_pose_ = this->declare_parameter<bool>("publish_mid_scan_pose", false);
 		// Voxel Local Map
 		const auto param_voxel_size = this->declare_parameter<double>("voxel_size", 0.5);
 		const auto param_max_points_per_voxel = this->declare_parameter<int>("max_points_per_voxel", 30);
@@ -91,7 +97,7 @@ class LioNode : public rclcpp::Node {
 		// Create publisher
 		odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>("/slim_lio/Odometry", 15);
 		pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/slim_lio/pose", 100);
-		aligned_cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/slim_lio/aligned_scan", 15);
+		downsampled_cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/slim_lio/downsampled_scan", 15);
 		map_cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/slim_lio/map", 15);
 		tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
 		trajectory_pub_ = this->create_publisher<nav_msgs::msg::Path>("/slim_lio/trajectory", 15);
@@ -144,12 +150,16 @@ class LioNode : public rclcpp::Node {
 		if (!gravity_initialized_)
 			return;
 		std::vector<PointCloud> points;
-		ParseLivox(msg, points);
+		if (lidar_type_ == "ouster")
+			ParseOuster(msg, points);
+		else
+			ParseLivox(msg, points);
 		if (points.empty())
 			return;
+		const double scan_start = rclcpp::Time(msg->header.stamp).seconds();
 		{
 			std::lock_guard<std::mutex> lock(queue_mutex);
-			sensor_data_queue_.push({LIDAR, points.back().timestamp, IMUData(), std::move(points)});
+			sensor_data_queue_.push({LIDAR, points.back().timestamp, IMUData(), std::move(points), scan_start});
 		}
 		queue_cv_.notify_one();
 	}
@@ -187,17 +197,53 @@ class LioNode : public rclcpp::Node {
 				}
 				estimator_->undistortPointcloud(d.lidardata);
 				std::vector<Eigen::Vector3d> downsampled_points = voxel_local_map_->filterPointCloud(d.lidardata);
-				State state = estimator_->updateState(downsampled_points, voxel_local_map_);
-				
-				std::vector<Eigen::Vector3d> aligned_cloud(d.lidardata.size());
-				for (size_t i = 0; i < d.lidardata.size(); i++) {
-					aligned_cloud[i] = state.rotation * d.lidardata[i].xyz + state.position;
+				State state;
+				if (init_localmap_kf_ > 0) {
+					// Bootstrap: insert the first few frames at the IMU-predicted pose so the
+					// first real IEKF update sees a dense multi-view map, not a single scan.
+					init_localmap_kf_--;
+					state = estimator_->getState();
+				} else {
+					state = estimator_->updateState(downsampled_points, voxel_local_map_);
 				}
-
-                // Publish pose and odometry
-				publishPoseWithPath(trajectory_msg_, state, d.timestamp, pose_pub_, trajectory_pub_);
-				publishOdometry(state, d.timestamp, odom_pub_, tf_broadcaster_);
-				voxel_local_map_->insert(downsampled_points);
+				
+				//std::vector<Eigen::Vector3d> aligned_cloud(d.lidardata.size());
+                std::vector<Eigen::Vector3d> aligned_downsampled(downsampled_points.size());
+				// for (size_t i = 0; i < d.lidardata.size(); i++) {
+				// 	aligned_cloud[i] = state.rotation * d.lidardata[i].xyz + state.position;
+				// }
+                for(size_t i = 0; i < downsampled_points.size(); i++) {
+                    aligned_downsampled[i] = state.rotation * downsampled_points[i] + state.position;
+                }
+                
+				// The IEKF state is valid at state.timestamp: the last propagated IMU sample at or before
+				// the scan end, which is also the reference frame the scan was deskewed to. The local map
+				// always uses that pose. For the published pose/odometry/cloud, the default convention
+				// (shared by the VBR ground truth, KISS-ICP and PIN-SLAM) is the pose at the scan MIDDLE
+				// stamped with the scan header: move the state and the body-frame cloud along the
+				// IMU-propagated motion from the reference instant to the middle of the scan.
+				State pub_state = state;
+				double pub_stamp = state.timestamp;
+				std::vector<Eigen::Vector3d> *pub_cloud = &downsampled_points;
+				std::vector<Eigen::Vector3d> mid_points;
+				if (publish_mid_scan_pose_) {
+					const double t_mid = 0.5 * (d.scan_start + d.timestamp);
+					const Sophus::SE3d T_ref_mid = estimator_->getRelativePropagatedMotion(t_mid);
+					const Sophus::SE3d T_odom_mid = Sophus::SE3d(state.rotation, state.position) * T_ref_mid;
+					pub_state.rotation = T_odom_mid.so3();
+					pub_state.position = T_odom_mid.translation();
+					pub_state.timestamp = t_mid;
+					const Sophus::SE3d T_mid_ref = T_ref_mid.inverse();
+					mid_points.resize(downsampled_points.size());
+					for (size_t i = 0; i < downsampled_points.size(); i++)
+						mid_points[i] = T_mid_ref * downsampled_points[i];
+					pub_cloud = &mid_points;
+					pub_stamp = d.scan_start;
+				}
+				publishPoseWithPath(trajectory_msg_, pub_state, pub_stamp, pose_pub_, trajectory_pub_);
+				publishOdometry(pub_state, pub_stamp, odom_pub_, tf_broadcaster_);
+				publishCloud(*pub_cloud, pub_stamp, downsampled_cloud_pub_);
+				voxel_local_map_->insert(aligned_downsampled);
 
 				if (!evict_initialized_) {
 					last_evict_pos_ = state.position;
@@ -207,7 +253,6 @@ class LioNode : public rclcpp::Node {
 					last_evict_pos_ = state.position;
 				}
 
-				publishCloud(aligned_cloud, d.timestamp, aligned_cloud_pub_);
 				auto end = std::chrono::steady_clock::now();
 				double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
 				spdlog::info("[LidarCallback] time took {} ms", elapsed_ms);
@@ -222,7 +267,7 @@ class LioNode : public rclcpp::Node {
 	// Publisher
 	rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
 	rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_pub_;
-	rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr aligned_cloud_pub_;
+	rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr downsampled_cloud_pub_;
 	rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr map_cloud_pub_;
 	rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr trajectory_pub_;
 	nav_msgs::msg::Path trajectory_msg_;
@@ -234,6 +279,8 @@ class LioNode : public rclcpp::Node {
 	bool gravity_initialized_;
 	double last_tstamp_;
 	double acc_scale_;
+	bool publish_mid_scan_pose_;
+	std::string lidar_type_;
 	std::vector<IMUData> init_imu_buffer_;
 	std::shared_ptr<StateEstimator> estimator_;
 	std::shared_ptr<VoxelLocalMap> voxel_local_map_;
@@ -242,6 +289,7 @@ class LioNode : public rclcpp::Node {
 	std::mutex queue_mutex;
 	std::condition_variable queue_cv_;
 	double latest_imu_tstamp_ = 0.0;
+    int init_localmap_kf_ = 5;
 	std::atomic<bool> running_;
 	std::priority_queue<SensorData, std::vector<SensorData>, SensorDataCompare> sensor_data_queue_;
 	Eigen::Vector3d last_evict_pos_ = Eigen::Vector3d::Zero();

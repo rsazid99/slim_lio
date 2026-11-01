@@ -1,11 +1,12 @@
 /*
- * @file            include/slim_lio/VoxelMap.hpp
- * @description
+ * @file            include/slim_lio/VoxelLocalMap.hpp
+ * @description     
  * @author          rsazid99 <rsazid99@gmail.com>
- * @createTime      2026-05-03 14:20:14
- * @lastModified    2026-05-03 14:20:14
- * Copyright ©Sazid Rahman Simanto All rights reserved
- */
+ * @createTime      2026-05-04 03:04:24
+ * @lastModified    2026-08-30 15:40:35
+ * Copyright (c) 2026 Sazid Rahman Simanto
+ * SPDX-License-Identifier: MIT
+*/
 
 #ifndef VOXELLOCALMAP_H
 #define VOXELLOCALMAP_H

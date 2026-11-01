@@ -1,11 +1,12 @@
 /*
  * @file            src/StateEstimator.cpp
- * @description
+ * @description     
  * @author          rsazid99 <rsazid99@gmail.com>
- * @createTime      2026-04-23 15:45:34
- * @lastModified    2026-04-23 15:45:34
- * Copyright ©Sazid Rahman Simanto All rights reserved
- */
+ * @createTime      2026-04-25 22:03:43
+ * @lastModified    2026-10-20 23:49:21
+ * Copyright (c) 2026 Sazid Rahman Simanto
+ * SPDX-License-Identifier: MIT
+*/
 
 #include "slim_lio/StateEstimator.hpp"
 namespace slio {
@@ -72,12 +73,14 @@ bool StateEstimator::getGravityInit(const std::vector<IMUData> &imu_buffer) {
 	current_state.velocity = R_align * current_state.velocity;
 	current_state.gravity = R_align * current_state.gravity;
 
-	if (var_gyro < 1e-5)
+	// static if not rotating (mean gyro well below any real turn rate) and not shaking hard
+    if (mean_gyro.norm() < 0.02 && var_acc < 1.0)   // 0.02 rad/s ≈ 1.1 deg/s
 		current_state.bias_gyro = mean_gyro;
 	else
 		current_state.bias_gyro.setZero();
 
 	current_state.bias_acc = mean_acc - R_align.transpose() * up;
+	current_state.timestamp = imu_buffer.back().timestamp;
 	g_initialized = true;
 	current_state.covariance.block<3, 3>(0, 0) *= 0.0001f;
 	current_state.covariance.block<3, 3>(3, 3) *= 0.001f;
@@ -87,6 +90,11 @@ bool StateEstimator::getGravityInit(const std::vector<IMUData> &imu_buffer) {
 	current_state.covariance.block<3, 3>(15, 15) *= 0.0001f;
 
 	return true;
+}
+
+State StateEstimator::getState() {
+	std::lock_guard<std::mutex> lock(state_estimator_mutex);
+	return current_state;
 }
 
 void StateEstimator::propagateIMU(const IMUData &imu_data) {
@@ -133,9 +141,35 @@ void StateEstimator::propagateIMU(const IMUData &imu_data) {
 	current_state.rotation = R_new;
 	current_state.position = new_position;
 	current_state.velocity = new_velocity;
+	current_state.timestamp = imu_data.timestamp;
 	StateWithStamp state_stamp = StateWithStamp(imu_data.timestamp, omega, acc, current_state.rotation,
 												current_state.position, current_state.velocity, current_state.gravity);
 	preint_list.push_back(state_stamp);
+}
+
+Sophus::SE3d StateEstimator::propagatedPose(const StateWithStamp &s, double t) {
+	const double dt = t - s.timestamp;
+	const Sophus::SO3d R = s.rotation * Sophus::SO3d::exp(s.gyro * dt);
+	const Eigen::Vector3d acc_world = R * s.accel + s.gravity;
+	const Eigen::Vector3d pos = s.position + s.velocity * dt + 0.5 * acc_world * dt * dt;
+	return Sophus::SE3d(R, pos);
+}
+
+Sophus::SE3d StateEstimator::getRelativePropagatedMotion(double t) {
+	std::lock_guard<std::mutex> lock(state_estimator_mutex);
+	if (preint_list.empty())
+		return Sophus::SE3d();
+	auto before = [](double value, const StateWithStamp &a) { return value < a.timestamp; };
+	// Reference: last propagated sample <= current_state.timestamp, the same entry
+	// undistortPointcloud deskews to (all samples <= scan end are propagated before the update).
+	auto ref_it = std::upper_bound(preint_list.begin(), preint_list.end(), current_state.timestamp, before);
+	if (ref_it != preint_list.begin())
+		ref_it--;
+	auto it = std::upper_bound(preint_list.begin(), preint_list.end(), t, before);
+	if (it != preint_list.begin())
+		it--;
+	const Sophus::SE3d T_odom_ref(ref_it->rotation, ref_it->position);
+	return T_odom_ref.inverse() * propagatedPose(*it, t);
 }
 
 void StateEstimator::undistortPointcloud(std::vector<PointCloud> &points) {
@@ -163,14 +197,7 @@ void StateEstimator::undistortPointcloud(std::vector<PointCloud> &points) {
 							  [](double value, const StateWithStamp &a) { return value < a.timestamp; });
 		if (it != tmp_preint_list.begin())
 			it--;
-		double dt = points[iter].timestamp - it->timestamp;
-		Sophus::SO3d dR = Sophus::SO3d::exp(it->gyro * dt);
-		Sophus::SO3d R = it->rotation * dR;
-
-		Eigen::Vector3d acc_world = R * it->accel + it->gravity;
-		Eigen::Vector3d pos = it->position + it->velocity * dt + 0.5 * acc_world * dt * dt;
-		Sophus::SE3d T_odom_imu(R, pos);
-		points[iter].xyz = T_imulastpoint_odom * T_odom_imu * points[iter].xyz;
+		points[iter].xyz = T_imulastpoint_odom * propagatedPose(*it, points[iter].timestamp) * points[iter].xyz;
 	}
 
 	{
@@ -207,8 +234,6 @@ State StateEstimator::updateState(std::vector<Eigen::Vector3d> &points,
 		if (correspondence_num < min_correspondence_threshold) {
 			spdlog::info("Insufficient correspondence {}, skipping update.", correspondence_num);
 			if (iter == 0) {
-				for (auto &p : points)
-					p = tmp_state.rotation * p + tmp_state.position;
 				return tmp_state;
 			}
 			break;
@@ -245,7 +270,9 @@ State StateEstimator::updateState(std::vector<Eigen::Vector3d> &points,
 		const double sigma = std::max(1.4826 * (*mid), 1e-6);
 
 		// Huber weights, measured from the centre so a shared pose offset
-		// (the signal) is not mistaken for outliers.
+		// (the signal) is not mistaken for outliers. A tight delta (~0.25) also suppresses
+		// the skewed near-median residual mass on rough stone surfaces that otherwise
+		// drags z upward (tested: per-normal-direction deltas make the z drift worse).
 		for (int i = 0; i < correspondence_num; i++) {
 			const double residual_abs = std::abs(residual_vec[i] - med) / sigma;
 			huber_weights[i] = (residual_abs > huber_loss_delta) ? huber_loss_delta / residual_abs : 1.0;
@@ -298,9 +325,6 @@ State StateEstimator::updateState(std::vector<Eigen::Vector3d> &points,
 		std::lock_guard<std::mutex> lock(state_estimator_mutex);
 		current_state = tmp_state;
 	}
-
-	for (auto &p : points)
-		p = tmp_state.rotation * p + tmp_state.position;
 
 	auto end = std::chrono::steady_clock::now();
 	double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();

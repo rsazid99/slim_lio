@@ -1,11 +1,12 @@
 /*
- * @file            src/VoxelMap.cpp
- * @description
+ * @file            src/VoxelLocalMap.cpp
+ * @description     
  * @author          rsazid99 <rsazid99@gmail.com>
- * @createTime      2026-05-03 14:20:25
- * @lastModified    2026-05-03 14:20:25
- * Copyright ©Sazid Rahman Simanto All rights reserved
- */
+ * @createTime      2026-05-07 02:32:59
+ * @lastModified    2026-09-03 01:52:41
+ * Copyright (c) 2026 Sazid Rahman Simanto
+ * SPDX-License-Identifier: MIT
+*/
 
 #include "slim_lio/VoxelLocalMap.hpp"
 
@@ -73,7 +74,8 @@ void VoxelLocalMap::insert(const std::vector<Eigen::Vector3d> &points) {
 		v.nomal = eig.eigenvectors().col(0).normalized();
 		v.planarity = eigenvalues(0) / (eigenvalues(0) + eigenvalues(1) + eigenvalues(2) + 1e-6);
 		const double line_ratio = eigenvalues(0) / (eigenvalues(1) + 1e-12);
-		v.valid = (v.planarity < min_planarity) && (line_ratio < 0.5); // sets false for line, edge, and blob
+        // sets false for line, edge, and blob
+		v.valid = (v.planarity < min_planarity) && (line_ratio < 0.5);
 	}
 }
 

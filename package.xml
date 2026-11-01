@@ -6,6 +6,14 @@
   <description>TODO: Package description</description>
   <maintainer email="rsazid99@gmail.com">sazid</maintainer>
   <license>MIT</license>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>message_filters</depend>
+  <depend>std_srvs</depend>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 

@@ -1,11 +1,12 @@
 /*
  * @file            include/slim_lio/StateEstimator.hpp
- * @description
+ * @description     
  * @author          rsazid99 <rsazid99@gmail.com>
- * @createTime      2026-04-23 13:48:48
- * @lastModified    2026-04-23 16:29:53
- * Copyright ©Sazid Rahman Simanto All rights reserved
- */
+ * @createTime      2026-04-25 22:03:43
+ * @lastModified    2026-08-30 15:42:43
+ * Copyright (c) 2026 Sazid Rahman Simanto
+ * SPDX-License-Identifier: MIT
+*/
 
 #ifndef STATEESTIMATOR_H
 #define STATEESTIMATOR_H
@@ -32,11 +33,19 @@ class StateEstimator {
 	~StateEstimator();
 
 	bool getGravityInit(const std::vector<IMUData> &imu_buffer);
+	State getState();
 	void propagateIMU(const IMUData &imu_data);
 	void undistortPointcloud(std::vector<PointCloud> &points);
+	// IMU-propagated motion from the current state's instant (the deskew reference: last propagated
+	// sample <= scan end) to time t, i.e. T_ref^-1 * T_prop(t), integrated exactly as
+	// undistortPointcloud does. Right-multiplying the updated pose by it moves the estimate to
+	// another instant of the scan (e.g. its middle) consistently with the deskewed cloud.
+	Sophus::SE3d getRelativePropagatedMotion(double t);
 	State updateState(std::vector<Eigen::Vector3d> &points, const std::shared_ptr<VoxelLocalMap> &voxel_local_map);
 
   private:
+	// Constant-rate integration of propagated sample s to time t (gyro/accel held at s's values).
+	static Sophus::SE3d propagatedPose(const StateWithStamp &s, double t);
 	State current_state;
 	bool g_initialized;
 	int max_iteration, min_correspondence_threshold;
