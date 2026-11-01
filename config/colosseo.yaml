@@ -3,7 +3,7 @@
 # * @description     
 # * @author          rsazid99 <rsazid99@gmail.com>
 # * @createTime      2026-09-02 15:48:27
-# * @lastModified    2026-09-04 00:56:52
+# * @lastModified    2026-11-02 00:39:12
 # * Copyright (c) 2026 Sazid Rahman Simanto
 # * SPDX-License-Identifier: MIT
 #
@@ -13,12 +13,8 @@ lio_node:
     imu_topic: '/ouster/imu'
     lidar_topic: '/ouster/points'
     lidar_type: 'ouster'
-    # Output convention: pose at the scan middle, stamped with the scan header (VBR ground truth /
-    # KISS-ICP / PIN-SLAM convention). false = IEKF state at its own instant (last IMU sample <= scan end).
     publish_mid_scan_pose: true
     init_imu_samples: 100
-    # extrinsic: lidar -> IMU. From vbr_calib.yaml, os_imu T_b (IMU pose in lidar
-    # frame): t = [0.006253, -0.011775, 0.007645]; p_imu = p_lidar - t.
     R_il: [
       1.0, 0.0, 0.0,
       0.0, 1.0, 0.0,
@@ -30,17 +26,12 @@ lio_node:
     min_planarity: 0.1
     max_iteration: 10
     min_correspondence_threshold: 20
-    huber_loss_delta: 1.0     # 0.25 had the best results
+    huber_loss_delta: 1.0
     converge_threshold: 0.01
     lidar_noise_std: 0.05
-    acc_scale: 1.0            # /ouster/imu already in m/s^2 (|acc| ~ 9.91)
-    # IMU noise densities from vbr_calib.yaml os_imu (Allan calibration, continuous-time:
-    # process_noise is scaled by dt in propagation). Densities inflated ~2x as margin for
-    # unmodeled effects (vibration, temperature). Gyro bias random walk kept as calibrated; acc bias
-    # random walk raised 6x (see below). Exact calib values re-tested: no gain (campus
-    # identical, colosseo 1-3 % worse).
-    gyro_noise_std: 0.0009    # calib gyroscope_noise_density  4.493e-4 rad/s/sqrt(Hz)
-    acc_noise_std: 0.024      # calib accelerometer_noise_density 1.210e-2 m/s^2/sqrt(Hz)
-    gyro_bias_noise_std: 0.00001  # calib gyroscope_random_walk 1.011e-5
-    acc_bias_noise_std: 0.001     # calib 1.58e-4, raised for faster vertical-channel adaptation
+    acc_scale: 1.0            
+    gyro_noise_std: 0.0009
+    acc_noise_std: 0.024
+    gyro_bias_noise_std: 0.00001
+    acc_bias_noise_std: 0.001
     gravity_noise_std: 0.001
