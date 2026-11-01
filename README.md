@@ -1,6 +1,6 @@
 # SLIM LIO
 
-Slim LIO is implemented in C++ using ROS2, Eigen, Sophus, nanoflann and GTSAM for real-time LiDAR-inertial SLAM. It consists of two nodes: `lio_node`, a tightly-coupled odometry front end built on an Iterated Error-State Kalman Filter (IEKF) with point-to-plane LiDAR registration and IMU preintegration, and `slam_node`, a pose-graph back end that detects loop closures and keeps a globally consistent keyframe map.
+Slim LIO is implemented in C++ using ROS2, Eigen, Sophus, nanoflann and GTSAM for real-time LiDAR-inertial SLAM. It consists of two nodes: `lio_node`, a tightly-coupled odometry front end built on an Iterated Extended Kalman Filter (IEKF) with point-to-plane LiDAR registration and IMU preintegration, and `slam_node`, a pose-graph back end that detects loop closures and keeps a globally consistent keyframe map.
 
 It is a minimalistic yet effective implementation, designed to keep the codebase simple, readable, and focused while still providing robust LiDAR-inertial odometry performance.
 
