@@ -3,7 +3,7 @@
  * @description     
  * @author          rsazid99 <rsazid99@gmail.com>
  * @createTime      2026-04-22 19:43:25
- * @lastModified    2026-11-01 19:58:20
+ * @lastModified    2026-11-02 00:43:23
  * Copyright (c) 2026 Sazid Rahman Simanto
  * SPDX-License-Identifier: MIT
 */
@@ -216,12 +216,6 @@ class LioNode : public rclcpp::Node {
                     aligned_downsampled[i] = state.rotation * downsampled_points[i] + state.position;
                 }
                 
-				// The IEKF state is valid at state.timestamp: the last propagated IMU sample at or before
-				// the scan end, which is also the reference frame the scan was deskewed to. The local map
-				// always uses that pose. For the published pose/odometry/cloud, the default convention
-				// (shared by the VBR ground truth, KISS-ICP and PIN-SLAM) is the pose at the scan MIDDLE
-				// stamped with the scan header: move the state and the body-frame cloud along the
-				// IMU-propagated motion from the reference instant to the middle of the scan.
 				State pub_state = state;
 				double pub_stamp = state.timestamp;
 				std::vector<Eigen::Vector3d> *pub_cloud = &downsampled_points;

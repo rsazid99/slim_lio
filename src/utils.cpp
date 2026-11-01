@@ -3,7 +3,7 @@
  * @description     
  * @author          rsazid99 <rsazid99@gmail.com>
  * @createTime      2026-04-27 23:38:58
- * @lastModified    2026-09-03 21:36:10
+ * @lastModified    2026-11-02 00:43:08
  * Copyright (c) 2026 Sazid Rahman Simanto
  * SPDX-License-Identifier: MIT
 */
@@ -70,11 +70,6 @@ void ParseOuster(const sensor_msgs::msg::PointCloud2::SharedPtr msg, std::vector
 
 		points.emplace_back(x, y, z, *iter_intensity, scan_start_time + offset);
 	}
-
-	// // Ouster clouds are ring-major (t restarts every ring); sort so the vector is in
-	// // acquisition order and points.back() is the true scan-end time.
-	// std::sort(points.begin(), points.end(),
-	// 		  [](const PointCloud &a, const PointCloud &b) { return a.timestamp < b.timestamp; });
 }
 
 void publishPoseWithPath(nav_msgs::msg::Path &path, const State &state, double timestamp,
